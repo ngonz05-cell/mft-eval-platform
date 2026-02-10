@@ -99,6 +99,13 @@ automation:
   alert_on_regression: true
   alert_channel: "#mft-ai-alerts"
 
+launch:
+  gk_name: mft_payment_extraction_v2
+  task_id: T123456789
+  diff_ids:
+    - D987654321
+  feature_name: Payment Metadata Extraction AI
+
 tags:
   - payments
   - extraction
