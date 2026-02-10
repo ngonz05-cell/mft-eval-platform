@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.css": "/static/css/main.2290e656.css",
-    "main.js": "/static/js/main.386fa465.js",
-    "index.html": "/index.html",
-    "main.2290e656.css.map": "/static/css/main.2290e656.css.map",
-    "main.386fa465.js.map": "/static/js/main.386fa465.js.map"
+    "main.css": "/mft-eval-platform/static/css/main.2290e656.css",
+    "main.js": "/mft-eval-platform/static/js/main.386fa465.js",
+    "index.html": "/mft-eval-platform/index.html",
+    "main.2290e656.css.map": "/mft-eval-platform/static/css/main.2290e656.css.map",
+    "main.386fa465.js.map": "/mft-eval-platform/static/js/main.386fa465.js.map"
   },
   "entrypoints": [
     "static/css/main.2290e656.css",
