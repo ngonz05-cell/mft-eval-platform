@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -239,8 +240,6 @@ class MFTEvalScubaEvent:
 
     def __post_init__(self):
         if not self.event_id:
-            import uuid
-
             self.event_id = str(uuid.uuid4())[:12]
         if not self.event_timestamp:
             self.event_timestamp = int(time.time())

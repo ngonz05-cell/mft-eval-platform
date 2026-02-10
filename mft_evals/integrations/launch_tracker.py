@@ -26,7 +26,10 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from mft_evals.integrations.scuba import MFTEvalScubaEvent
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +173,7 @@ class LaunchTracker:
             logger.info("EP Launch Tracker client initialized")
         except ImportError:
             self._ep_client = None
-            self._local_log_path = (
-                __import__("pathlib").Path.home() / ".mft_evals" / "launches.jsonl"
-            )
+            self._local_log_path = Path.home() / ".mft_evals" / "launches.jsonl"
             self._local_log_path.parent.mkdir(parents=True, exist_ok=True)
             logger.info(
                 f"EP client unavailable, logging launches to: {self._local_log_path}"
@@ -224,9 +225,7 @@ class LaunchTracker:
         # Also log to Scuba as eval_launched event
         if self._scuba_logger:
             self._scuba_logger._log_event(
-                __import__(
-                    "mft_evals.integrations.scuba", fromlist=["MFTEvalScubaEvent"]
-                ).MFTEvalScubaEvent(
+                MFTEvalScubaEvent(
                     event_type="eval_launched",
                     eval_name=launch_dict.get("eval_name", ""),
                     eval_version=launch_dict.get("eval_version", ""),
