@@ -1,0 +1,108 @@
+# MFT Eval Platform - Payment Metadata Extraction
+# Example YAML configuration matching the reference doc
+
+name: payment_metadata_extraction
+version: "1.2.0"
+team: payments_platform
+
+owner:
+  pm: "@nategonzalez"
+  eng: "@payments_oncall"
+
+description: |
+  Measures accuracy of AI system extracting structured payment data
+  from raw transaction descriptions and receipts.
+
+  Examples of fields:
+  - Transaction ID
+  - Amount
+  - Currency
+  - Date
+  - Merchant
+  - Payment Method
+
+capability:
+  what: "Extract payment metadata (amount, currency, date, merchant, etc.)"
+  why: "Enable automated dispute resolution and reconciliation"
+
+dataset:
+  source: hive://mft_evals/payment_extraction_v2
+  size: 3000
+  split:
+    validation: 0.7
+    test: 0.3
+  refresh_schedule: quarterly
+
+expected_output:
+  schema:
+    transaction_id: string
+    amount: float
+    currency: string  # ISO 4217
+    date: date
+    merchant: string
+    payment_method: enum[card, ach, wire, crypto]
+
+scoring:
+  primary_metric: weighted_score
+  metrics:
+    - name: full_match
+      type: exact_match
+      weight: 0.30
+      description: "% of records where all fields match perfectly"
+
+    - name: amount_f1
+      type: f1_score
+      field: amount
+      weight: 0.25
+      description: "How frequently amount values are correct"
+
+    - name: date_accuracy
+      type: exact_match
+      field: date
+      tolerance: 0_days
+      weight: 0.20
+      description: "% of dates parsed correctly"
+
+    - name: currency_f1
+      type: f1_score
+      field: currency
+      weight: 0.15
+      description: "How frequently currency is correct"
+
+    - name: merchant_f1
+      type: token_f1
+      field: merchant
+      weight: 0.10
+      description: "Token-level F1 for merchant name variations"
+
+# Scoring formula:
+# Score = 0.3 * FullMatch + 0.25 * AmountF1 + 0.20 * DateAccuracy + 0.15 * CurrencyF1 + 0.10 * MerchantF1
+
+thresholds:
+  baseline:
+    weighted_score: 0.85
+    amount_f1: 0.92
+    currency_f1: 0.95
+    date_accuracy: 0.90
+    merchant_f1: 0.85
+  target:
+    weighted_score: 0.93
+    amount_f1: 0.96
+    currency_f1: 0.98
+    date_accuracy: 0.95
+    merchant_f1: 0.90
+  blocking: true  # Blocks deploy if below baseline
+
+automation:
+  schedule: "0 2 * * *"  # Nightly at 2am
+  ci_integration: true
+  alert_on_regression: true
+  alert_channel: "#mft-ai-alerts"
+
+tags:
+  - payments
+  - extraction
+  - production
+  - fintech
+
+status: active
