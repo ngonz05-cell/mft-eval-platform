@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import EvalWizard from './components/EvalWizard';
 import EvalList from './components/EvalList';
 import Header from './components/Header';
+import LandingPage from './components/LandingPage';
+import GuidedEval from './components/GuidedEval';
 import './App.css';
 
 function App() {
-  const [view, setView] = useState('list'); // 'list' or 'create'
+  const [view, setView] = useState('list'); // 'list', 'landing', 'create', 'guided'
   const [evals, setEvals] = useState([
     {
       id: 1,
@@ -38,6 +40,40 @@ function App() {
     setView('list');
   };
 
+  const renderView = () => {
+    switch (view) {
+      case 'landing':
+        return (
+          <LandingPage
+            onSelectGuided={() => setView('guided')}
+            onSelectExpert={() => setView('create')}
+          />
+        );
+      case 'guided':
+        return (
+          <GuidedEval
+            onComplete={handleCreateEval}
+            onCancel={() => setView('list')}
+          />
+        );
+      case 'create':
+        return (
+          <EvalWizard
+            onComplete={handleCreateEval}
+            onCancel={() => setView('list')}
+          />
+        );
+      case 'list':
+      default:
+        return (
+          <EvalList
+            evals={evals}
+            onCreateNew={() => setView('landing')}
+          />
+        );
+    }
+  };
+
   return (
     <div className="app">
       <Header
@@ -46,17 +82,7 @@ function App() {
       />
 
       <main className="main-content">
-        {view === 'list' ? (
-          <EvalList
-            evals={evals}
-            onCreateNew={() => setView('create')}
-          />
-        ) : (
-          <EvalWizard
-            onComplete={handleCreateEval}
-            onCancel={() => setView('list')}
-          />
-        )}
+        {renderView()}
       </main>
     </div>
   );

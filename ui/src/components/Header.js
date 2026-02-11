@@ -16,8 +16,8 @@ function Header({ view, onNavigate }) {
           My Evals
         </button>
         <button
-          className={view === 'create' ? 'active' : ''}
-          onClick={() => onNavigate('create')}
+          className={['landing', 'create', 'guided'].includes(view) ? 'active' : ''}
+          onClick={() => onNavigate('landing')}
         >
           + Create New
         </button>
