@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { runEval, listRuns, deleteEval, getRunResults } from '../api';
 
-function EvalList({ evals, isLoading, onRefresh }) {
+function EvalList({ evals, isLoading, onRefresh, demoMode }) {
   const [expandedEval, setExpandedEval] = useState(null);
   const [evalRuns, setEvalRuns] = useState({});
   const [runningEvals, setRunningEvals] = useState({});
   const [expandedRun, setExpandedRun] = useState(null);
   const [runDetails, setRunDetails] = useState({});
   const [deletingEvals, setDeletingEvals] = useState({});
+  const [notification, setNotification] = useState(null);
 
   const getScoreColor = (score) => {
     if (score === null || score === undefined) return '';
@@ -58,6 +59,11 @@ function EvalList({ evals, isLoading, onRefresh }) {
   };
 
   const handleRunEval = async (evalId) => {
+    if (demoMode) {
+      setNotification({ type: 'info', message: 'Running evals requires the backend API. See the README for setup instructions.' });
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
     setRunningEvals(prev => ({ ...prev, [evalId]: true }));
     try {
       await runEval(evalId, 'manual');
@@ -66,13 +72,19 @@ function EvalList({ evals, isLoading, onRefresh }) {
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('Run failed:', err);
-      alert(`Run failed: ${err.message}`);
+      setNotification({ type: 'error', message: `Run failed: ${err.message}` });
+      setTimeout(() => setNotification(null), 5000);
     } finally {
       setRunningEvals(prev => ({ ...prev, [evalId]: false }));
     }
   };
 
   const handleDeleteEval = async (evalId) => {
+    if (demoMode) {
+      setNotification({ type: 'info', message: 'Deleting evals requires the backend API. See the README for setup instructions.' });
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
     if (!window.confirm('Delete this eval and all its runs? This cannot be undone.')) return;
     setDeletingEvals(prev => ({ ...prev, [evalId]: true }));
     try {
@@ -80,7 +92,8 @@ function EvalList({ evals, isLoading, onRefresh }) {
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('Delete failed:', err);
-      alert(`Delete failed: ${err.message}`);
+      setNotification({ type: 'error', message: `Delete failed: ${err.message}` });
+      setTimeout(() => setNotification(null), 5000);
     } finally {
       setDeletingEvals(prev => ({ ...prev, [evalId]: false }));
     }
@@ -129,6 +142,12 @@ function EvalList({ evals, isLoading, onRefresh }) {
 
   return (
     <div className="eval-list">
+      {notification && (
+        <div className={`eval-notification eval-notification-${notification.type}`}>
+          <span>{notification.type === 'error' ? '⚠️' : 'ℹ️'} {notification.message}</span>
+          <button className="notification-dismiss" onClick={() => setNotification(null)}>✕</button>
+        </div>
+      )}
       <div className="eval-list-header">
         <h2>My Evaluations</h2>
         {onRefresh && (
