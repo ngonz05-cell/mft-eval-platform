@@ -17,7 +17,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -52,7 +52,8 @@ def get_connection():
 def init_db():
     """Create tables if they don't exist."""
     with get_connection() as conn:
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS evals (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -159,7 +160,8 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_eval_runs_status ON eval_runs(status);
             CREATE INDEX IF NOT EXISTS idx_evals_status ON evals(status);
             CREATE INDEX IF NOT EXISTS idx_evals_team ON evals(team);
-        """)
+        """
+        )
     logger.info(f"Database initialized at {get_db_path()}")
 
 
@@ -169,7 +171,8 @@ def init_db():
 def create_eval(config: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new eval from the frontend evalConfig object."""
     eval_id = config.get("id") or str(uuid.uuid4())[:12]
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    eval_id = str(uuid.uuid4())
 
     metrics = config.get("metrics", [])
     baseline_thresholds = {}
@@ -181,7 +184,8 @@ def create_eval(config: Dict[str, Any]) -> Dict[str, Any]:
             target_thresholds[field_name] = m.get("target", 95) / 100.0
 
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO evals (
                 id, name, version, description, refined_prompt, team,
                 owner_pm, owner_eng, status, primary_metric,
@@ -211,49 +215,51 @@ def create_eval(config: Dict[str, Any]) -> Dict[str, Any]:
                 ?, ?, ?, ?,
                 ?, ?, ?
             )
-        """, (
-            eval_id,
-            config.get("evalName", config.get("name", "")),
-            config.get("version", "1.0.0"),
-            config.get("description", ""),
-            config.get("refinedPrompt", ""),
-            config.get("team", ""),
-            config.get("ownerPm", ""),
-            config.get("ownerEng", ""),
-            "draft",
-            config.get("primaryMetric", "accuracy"),
-            json.dumps(metrics),
-            json.dumps(baseline_thresholds),
-            json.dumps(target_thresholds),
-            config.get("datasetSource", ""),
-            config.get("datasetUrl", ""),
-            config.get("datasetSize", 0),
-            json.dumps(config.get("sampleData", [])),
-            config.get("modelEndpoint", ""),
-            config.get("modelAuthType", "none"),
-            config.get("modelRequestFormat", "openai_chat"),
-            config.get("modelResponsePath", "choices[0].message.content"),
-            config.get("modelRequestTemplate", ""),
-            1 if config.get("prodLogEnabled") else 0,
-            config.get("prodLogSource", ""),
-            config.get("prodLogTable", ""),
-            config.get("prodLogInputColumn", ""),
-            config.get("prodLogOutputColumn", ""),
-            config.get("prodLogTimestampColumn", ""),
-            config.get("prodLogSampleRate", 10),
-            config.get("schedule", ""),
-            1 if config.get("ciIntegration") else 0,
-            1 if config.get("alertOnRegression") else 0,
-            config.get("alertChannel", ""),
-            1 if config.get("blocking") else 0,
-            config.get("gkName", ""),
-            config.get("taskId", ""),
-            config.get("featureName", ""),
-            json.dumps(config.get("tags", [])),
-            json.dumps(config),
-            now,
-            now,
-        ))
+        """,
+            (
+                eval_id,
+                config.get("evalName", config.get("name", "")),
+                config.get("version", "1.0.0"),
+                config.get("description", ""),
+                config.get("refinedPrompt", ""),
+                config.get("team", ""),
+                config.get("ownerPm", ""),
+                config.get("ownerEng", ""),
+                "draft",
+                config.get("primaryMetric", "accuracy"),
+                json.dumps(metrics),
+                json.dumps(baseline_thresholds),
+                json.dumps(target_thresholds),
+                config.get("datasetSource", ""),
+                config.get("datasetUrl", ""),
+                config.get("datasetSize", 0),
+                json.dumps(config.get("sampleData", [])),
+                config.get("modelEndpoint", ""),
+                config.get("modelAuthType", "none"),
+                config.get("modelRequestFormat", "openai_chat"),
+                config.get("modelResponsePath", "choices[0].message.content"),
+                config.get("modelRequestTemplate", ""),
+                1 if config.get("prodLogEnabled") else 0,
+                config.get("prodLogSource", ""),
+                config.get("prodLogTable", ""),
+                config.get("prodLogInputColumn", ""),
+                config.get("prodLogOutputColumn", ""),
+                config.get("prodLogTimestampColumn", ""),
+                config.get("prodLogSampleRate", 10),
+                config.get("schedule", ""),
+                1 if config.get("ciIntegration") else 0,
+                1 if config.get("alertOnRegression") else 0,
+                config.get("alertChannel", ""),
+                1 if config.get("blocking") else 0,
+                config.get("gkName", ""),
+                config.get("taskId", ""),
+                config.get("featureName", ""),
+                json.dumps(config.get("tags", [])),
+                json.dumps(config),
+                now,
+                now,
+            ),
+        )
 
     return get_eval(eval_id)
 
@@ -294,15 +300,30 @@ def list_evals(
 
 def update_eval(eval_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update an eval's configuration."""
-    now = datetime.utcnow().isoformat()
-
+    now = datetime.now(timezone.utc).isoformat()
     allowed_columns = {
-        "name", "version", "description", "refined_prompt", "team",
-        "owner_pm", "owner_eng", "status", "primary_metric",
-        "model_endpoint", "model_auth_type", "model_request_format",
-        "model_response_path", "model_request_template",
-        "dataset_source", "dataset_url", "dataset_size",
-        "schedule", "alert_channel", "gk_name", "task_id", "feature_name",
+        "name",
+        "version",
+        "description",
+        "refined_prompt",
+        "team",
+        "owner_pm",
+        "owner_eng",
+        "status",
+        "primary_metric",
+        "model_endpoint",
+        "model_auth_type",
+        "model_request_format",
+        "model_response_path",
+        "model_request_template",
+        "dataset_source",
+        "dataset_url",
+        "dataset_size",
+        "schedule",
+        "alert_channel",
+        "gk_name",
+        "task_id",
+        "feature_name",
     }
 
     set_clauses = ["updated_at = ?"]
@@ -318,6 +339,14 @@ def update_eval(eval_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any
         set_clauses.append("metrics_json = ?")
         params.append(json.dumps(updates["metrics"]))
 
+    if "sample_data_json" in updates:
+        set_clauses.append("sample_data_json = ?")
+        params.append(
+            updates["sample_data_json"]
+            if isinstance(updates["sample_data_json"], str)
+            else json.dumps(updates["sample_data_json"])
+        )
+    now = datetime.now(timezone.utc).isoformat()
     params.append(eval_id)
 
     with get_connection() as conn:
@@ -342,13 +371,16 @@ def delete_eval(eval_id: str) -> bool:
 def create_run(eval_id: str, trigger: str = "manual") -> Dict[str, Any]:
     """Create a new pending run for an eval."""
     run_id = str(uuid.uuid4())[:12]
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO eval_runs (id, eval_id, status, trigger, created_at, started_at)
             VALUES (?, ?, 'running', ?, ?, ?)
-        """, (run_id, eval_id, trigger, now, now))
+        """,
+            (run_id, eval_id, trigger, now, now),
+        )
 
     return get_run(run_id)
 
@@ -371,10 +403,11 @@ def complete_run(
     model_version: str = "",
 ) -> Dict[str, Any]:
     """Mark a run as completed with results."""
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE eval_runs SET
                 status = 'completed',
                 primary_score = ?,
@@ -393,40 +426,45 @@ def complete_run(
                 model_version = ?,
                 completed_at = ?
             WHERE id = ?
-        """, (
-            primary_score,
-            pass_rate,
-            json.dumps(metrics),
-            num_examples,
-            num_passed,
-            num_failed,
-            1 if passed_baseline else 0,
-            1 if passed_target else 0,
-            json.dumps(baseline_thresholds or {}),
-            json.dumps(target_thresholds or {}),
-            json.dumps(detailed_results),
-            json.dumps(failures),
-            duration_ms,
-            model_version,
-            now,
-            run_id,
-        ))
+        """,
+            (
+                primary_score,
+                pass_rate,
+                json.dumps(metrics),
+                num_examples,
+                num_passed,
+                num_failed,
+                1 if passed_baseline else 0,
+                1 if passed_target else 0,
+                json.dumps(baseline_thresholds or {}),
+                json.dumps(target_thresholds or {}),
+                json.dumps(detailed_results),
+                json.dumps(failures),
+                duration_ms,
+                model_version,
+                now,
+                run_id,
+            ),
+        )
 
     return get_run(run_id)
 
 
 def fail_run(run_id: str, error_message: str) -> Dict[str, Any]:
     """Mark a run as failed with an error message."""
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE eval_runs SET
                 status = 'failed',
                 error_message = ?,
                 completed_at = ?
             WHERE id = ?
-        """, (error_message, now, run_id))
+        """,
+            (error_message, now, run_id),
+        )
 
     return get_run(run_id)
 
@@ -465,11 +503,14 @@ def list_runs(
 def get_latest_run(eval_id: str) -> Optional[Dict[str, Any]]:
     """Get the most recent completed run for an eval."""
     with get_connection() as conn:
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT * FROM eval_runs
             WHERE eval_id = ? AND status = 'completed'
             ORDER BY completed_at DESC LIMIT 1
-        """, (eval_id,)).fetchone()
+        """,
+            (eval_id,),
+        ).fetchone()
     if not row:
         return None
     return _row_to_run_dict(row)
@@ -481,8 +522,14 @@ def get_latest_run(eval_id: str) -> Optional[Dict[str, Any]]:
 def _row_to_eval_dict(row: sqlite3.Row) -> Dict[str, Any]:
     """Convert a SQLite Row to a frontend-friendly dict."""
     d = dict(row)
-    for key in ("metrics_json", "baseline_thresholds_json", "target_thresholds_json",
-                "sample_data_json", "tags_json", "config_json"):
+    for key in (
+        "metrics_json",
+        "baseline_thresholds_json",
+        "target_thresholds_json",
+        "sample_data_json",
+        "tags_json",
+        "config_json",
+    ):
         if key in d and d[key]:
             try:
                 d[key.replace("_json", "")] = json.loads(d[key])
@@ -498,8 +545,13 @@ def _row_to_eval_dict(row: sqlite3.Row) -> Dict[str, Any]:
 def _row_to_run_dict(row: sqlite3.Row) -> Dict[str, Any]:
     """Convert a SQLite Row to a frontend-friendly dict."""
     d = dict(row)
-    for key in ("metrics_json", "baseline_thresholds_json", "target_thresholds_json",
-                "detailed_results_json", "failures_json"):
+    for key in (
+        "metrics_json",
+        "baseline_thresholds_json",
+        "target_thresholds_json",
+        "detailed_results_json",
+        "failures_json",
+    ):
         if key in d and d[key]:
             try:
                 d[key.replace("_json", "")] = json.loads(d[key])
@@ -513,5 +565,6 @@ def _row_to_run_dict(row: sqlite3.Row) -> Dict[str, Any]:
 def _camel_to_snake(name: str) -> str:
     """Convert camelCase to snake_case."""
     import re
-    s1 = re.sub(r'(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()

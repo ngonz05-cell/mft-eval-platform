@@ -36,8 +36,22 @@ from mft_evals.scorers import (
     TokenF1Scorer,
 )
 from mft_evals import storage
+from mft_evals.integrations.scuba import ScubaLogger
 
 logger = logging.getLogger(__name__)
+
+_scuba_logger = None
+_scuba_lock = __import__("threading").Lock()
+
+
+def _get_scuba_logger() -> ScubaLogger:
+    """Lazy-init thread-safe singleton ScubaLogger."""
+    global _scuba_logger
+    if _scuba_logger is None:
+        with _scuba_lock:
+            if _scuba_logger is None:
+                _scuba_logger = ScubaLogger()
+    return _scuba_logger
 
 
 # ─── Measurement Method → Scorer Mapping ─────────────────────────────────────
@@ -310,6 +324,16 @@ async def execute_eval_run(eval_id: str, trigger: str = "manual") -> Dict[str, A
     run_id = run_record["id"]
     start_time = time.time()
 
+    scuba = _get_scuba_logger()
+    scuba.log_eval_run_started(
+        eval_name=eval_data.get("name", ""),
+        run_id=run_id,
+        trigger=trigger,
+        eval_version=eval_data.get("version", "1.0.0"),
+        gk_name=eval_data.get("gk_name", ""),
+        task_id=eval_data.get("task_id", ""),
+    )
+
     try:
         eval_obj = build_eval_from_config(eval_data)
 
@@ -375,6 +399,44 @@ async def execute_eval_run(eval_id: str, trigger: str = "manual") -> Dict[str, A
             baseline_thresholds=results.baseline_thresholds,
             target_thresholds=results.target_thresholds,
         )
+
+        try:
+            scuba.log_eval_run_completed(
+                eval_name=eval_data.get("name", ""),
+                run_id=run_id,
+                eval_version=eval_data.get("version", "1.0.0"),
+                primary_score=results.primary_score,
+                pass_rate=results.pass_rate,
+                num_examples=results.num_examples,
+                num_passed=results.num_passed,
+                num_failed=len(results.failures),
+                passed_baseline=results.passed_baseline,
+                passed_target=results.passed_target,
+                is_blocking=bool(eval_data.get("blocking", False)),
+                metrics=results.metrics,
+                baseline_thresholds=results.baseline_thresholds,
+                target_thresholds=results.target_thresholds,
+                duration_ms=duration_ms,
+                dataset_source=eval_data.get("dataset_source", ""),
+                dataset_size=results.num_examples,
+                trigger=trigger,
+                gk_name=eval_data.get("gk_name", ""),
+                task_id=eval_data.get("task_id", ""),
+            )
+
+            if hasattr(results, "regression_detected") and results.regression_detected:
+                scuba.log_eval_regression(
+                    eval_name=eval_data.get("name", ""),
+                    run_id=run_id,
+                    eval_version=eval_data.get("version", "1.0.0"),
+                    primary_score=results.primary_score,
+                    delta_primary_score=getattr(results, "delta_vs_previous", {}).get("primary_score", 0.0),
+                    metrics=results.metrics,
+                    gk_name=eval_data.get("gk_name", ""),
+                    task_id=eval_data.get("task_id", ""),
+                )
+        except Exception as scuba_err:
+            logger.warning(f"Scuba logging failed (non-fatal): {scuba_err}", exc_info=True)
 
         return completed
 
