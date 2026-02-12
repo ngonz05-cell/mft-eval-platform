@@ -5,7 +5,6 @@ function Header({ view, onNavigate }) {
     <header className="header">
       <div className="header-logo">
         <h1>📊 MFT Eval Platform</h1>
-        <span>Meta Fintech</span>
       </div>
 
       <nav className="header-nav">
@@ -16,8 +15,8 @@ function Header({ view, onNavigate }) {
           My Evals
         </button>
         <button
-          className={view === 'create' ? 'active' : ''}
-          onClick={() => onNavigate('create')}
+          className={['guided'].includes(view) ? 'active' : ''}
+          onClick={() => onNavigate('guided')}
         >
           + Create New
         </button>

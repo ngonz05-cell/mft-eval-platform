@@ -17,10 +17,13 @@ Rules of thumb:
 - Accept imperfect metrics early—iterate later
 """
 
+import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
-import re
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -513,19 +516,55 @@ RATIONALE: <your explanation>
 
     def _call_llm(self, prompt: str) -> str:
         """
-        Call LLM to get judgment.
-
-        This is a placeholder - in production, this would use:
-        - MetaGen's LLM infrastructure
-        - MUTE's judge framework
-        - Or direct API calls to model endpoints
+        Call LLM to get judgment using the platform's configured LLM provider.
+        Falls back to a heuristic-based scorer if the LLM call fails.
         """
-        # Placeholder: In production, replace with actual LLM call
-        # For now, return a mock response for testing
-        raise NotImplementedError(
-            "LLM judge requires Meta internal infrastructure. "
-            "Use deterministic scorers for local testing."
-        )
+        try:
+            import asyncio
+            from api.llm import _call_llm as api_call_llm
+
+            system = "You are an expert evaluator scoring model outputs. Be precise and objective."
+            messages = [{"role": "user", "content": prompt}]
+
+            loop = None
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, api_call_llm(system, messages))
+                    return future.result(timeout=30)
+            else:
+                return asyncio.run(api_call_llm(system, messages))
+        except Exception as e:
+            logger.warning(f"LLM judge call failed ({e}), using heuristic fallback")
+            return self._heuristic_fallback(prompt)
+
+    def _heuristic_fallback(self, prompt: str) -> str:
+        """Simple heuristic fallback when LLM is unavailable."""
+        if "Expected Response" in prompt and "Actual Response" in prompt:
+            expected_start = prompt.find("## Expected Response") + len("## Expected Response")
+            expected_end = prompt.find("## Actual Response")
+            actual_start = prompt.find("## Actual Response") + len("## Actual Response")
+            actual_end = prompt.find("## Instructions")
+
+            expected = prompt[expected_start:expected_end].strip().lower()
+            actual = prompt[actual_start:actual_end].strip().lower()
+
+            if expected == actual:
+                return "SCORE: 1.0\nRATIONALE: Exact match between expected and actual."
+            elif expected in actual or actual in expected:
+                return "SCORE: 0.7\nRATIONALE: Partial overlap between expected and actual."
+            else:
+                expected_words = set(expected.split())
+                actual_words = set(actual.split())
+                if expected_words and actual_words:
+                    overlap = len(expected_words & actual_words) / len(expected_words)
+                    return f"SCORE: {overlap:.2f}\nRATIONALE: Word overlap ratio: {overlap:.2%}"
+        return "SCORE: 0.5\nRATIONALE: Unable to evaluate — heuristic fallback."
 
     def _parse_response(self, response: str) -> tuple[float, str]:
         """Parse LLM response to extract score and rationale"""

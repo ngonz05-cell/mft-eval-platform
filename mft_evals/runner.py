@@ -8,18 +8,25 @@ A real eval:
 - Runs in CI or on a schedule
 - Compares current output to a baseline
 - Produces a metric you can chart
+
+Instrumented with Scuba logging for lifecycle tracking:
+- eval_run_started: when a run begins
+- eval_run_completed: when a run finishes (with all scores/metrics)
+- eval_regression: when a regression is detected vs previous run
 """
 
+import logging
+import os
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
-import uuid
-import logging
 
-from mft_evals.eval import Eval, EvalConfig
 from mft_evals.dataset import Dataset, TestCase
-from mft_evals.scorers import Scorer, ScorerResult
+from mft_evals.eval import Eval, EvalConfig
+from mft_evals.integrations.scuba import ScubaLogger
 from mft_evals.results import EvalResults, FailureCase
+from mft_evals.scorers import Scorer, ScorerResult
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +34,7 @@ logger = logging.getLogger(__name__)
 class EvalRunner:
     """
     Runs evaluations and produces results.
+    Automatically logs lifecycle events to Scuba for tracking and dashboarding.
 
     Usage:
         eval = Eval(
@@ -40,13 +48,18 @@ class EvalRunner:
         results = runner.run(model=my_model)
     """
 
-    def __init__(self, eval: Eval):
+    def __init__(self, eval: Eval, scuba_logger: ScubaLogger = None):
         self.eval = eval
+        self._scuba = scuba_logger or ScubaLogger()
 
     def run(
         self,
         model: Any = None,
         generate_fn: Callable[[Any], Any] = None,
+        trigger: str = "manual",
+        gk_name: str = "",
+        task_id: str = "",
+        diff_id: str = "",
     ) -> EvalResults:
         """
         Run the evaluation.
@@ -55,6 +68,10 @@ class EvalRunner:
             model: Model/agent to evaluate
             generate_fn: Optional function to generate outputs from inputs
                         If not provided, dataset must have pre-generated outputs
+            trigger: What triggered this run (manual, ci, scheduled, pre_deploy)
+            gk_name: Associated Gatekeeper feature flag
+            task_id: Associated Phabricator task ID
+            diff_id: Associated diff ID
 
         Returns:
             EvalResults with complete evaluation results
@@ -63,6 +80,28 @@ class EvalRunner:
         start_time = datetime.now()
 
         logger.info(f"Starting eval run {run_id} for {self.eval.name}")
+
+        # ── Scuba: log run started ────────────────────────────────────
+        eval_version = self.eval.config.version if self.eval.config else "1.0.0"
+        model_version = getattr(model, "version", "") if model else ""
+
+        # Pull GK/task metadata from eval config if not provided directly
+        config_gk = getattr(self.eval.config, "gk_name", "") if self.eval.config else ""
+        config_task = (
+            getattr(self.eval.config, "task_id", "") if self.eval.config else ""
+        )
+        effective_gk = gk_name or config_gk
+        effective_task = task_id or config_task
+
+        self._scuba.log_eval_run_started(
+            eval_name=self.eval.name,
+            run_id=run_id,
+            model_version=model_version,
+            trigger=trigger,
+            eval_version=eval_version,
+            gk_name=effective_gk,
+            task_id=effective_task,
+        )
 
         if not self.eval.dataset:
             raise ValueError("Dataset is required to run evaluation")
@@ -79,13 +118,15 @@ class EvalRunner:
             # Get actual output
             if generate_fn:
                 actual = generate_fn(test_case.input)
-            elif model and hasattr(model, '__call__'):
+            elif model and hasattr(model, "__call__"):
                 actual = model(test_case.input)
-            elif model and hasattr(model, 'generate'):
+            elif model and hasattr(model, "generate"):
                 actual = model.generate(test_case.input)
             else:
                 # Assume actual output is in metadata
-                actual = test_case.metadata.get("actual_output", test_case.metadata.get("actual", ""))
+                actual = test_case.metadata.get(
+                    "actual_output", test_case.metadata.get("actual", "")
+                )
 
             # Score with each scorer
             case_scores = {}
@@ -108,26 +149,30 @@ class EvalRunner:
                     case_passed = False
 
             # Record detailed result
-            detailed_results.append({
-                "test_case_id": test_case.id,
-                "input": test_case.input,
-                "expected": test_case.expected_output,
-                "actual": actual,
-                "scores": case_scores,
-                "passed": case_passed,
-            })
+            detailed_results.append(
+                {
+                    "test_case_id": test_case.id,
+                    "input": test_case.input,
+                    "expected": test_case.expected_output,
+                    "actual": actual,
+                    "scores": case_scores,
+                    "passed": case_passed,
+                }
+            )
 
             # Record failure if applicable
             if not case_passed:
-                failures.append(FailureCase(
-                    test_case_id=test_case.id,
-                    input=test_case.input,
-                    expected=test_case.expected_output,
-                    actual=actual,
-                    scores=case_scores,
-                    rationale="; ".join(rationales),
-                    metadata=test_case.metadata,
-                ))
+                failures.append(
+                    FailureCase(
+                        test_case_id=test_case.id,
+                        input=test_case.input,
+                        expected=test_case.expected_output,
+                        actual=actual,
+                        scores=case_scores,
+                        rationale="; ".join(rationales),
+                        metadata=test_case.metadata,
+                    )
+                )
 
         # Aggregate metrics
         metrics = {}
@@ -176,7 +221,7 @@ class EvalRunner:
             eval_version=self.eval.config.version if self.eval.config else "1.0.0",
             run_id=run_id,
             timestamp=start_time,
-            model_version=getattr(model, 'version', '') if model else '',
+            model_version=model_version,
             metrics=metrics,
             primary_score=primary_score,
             passed_baseline=passed_baseline,
@@ -190,6 +235,51 @@ class EvalRunner:
         )
 
         logger.info(f"Eval run {run_id} completed: {results.pass_rate:.1%} pass rate")
+
+        # ── Scuba: log run completed ──────────────────────────────────
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+
+        self._scuba.log_eval_run_completed(
+            eval_name=self.eval.name,
+            run_id=run_id,
+            eval_version=eval_version,
+            model_version=model_version,
+            primary_score=primary_score,
+            pass_rate=results.pass_rate,
+            num_examples=results.num_examples,
+            num_passed=num_passed,
+            num_failed=len(failures),
+            passed_baseline=passed_baseline,
+            passed_target=passed_target,
+            is_blocking=(
+                self.eval.config.thresholds.blocking
+                if self.eval.config and self.eval.config.thresholds
+                else False
+            ),
+            metrics=metrics,
+            baseline_thresholds=baseline_thresholds,
+            target_thresholds=target_thresholds,
+            duration_ms=duration_ms,
+            dataset_source=self.eval.config.dataset_source if self.eval.config else "",
+            dataset_size=len(detailed_results),
+            trigger=trigger,
+            gk_name=effective_gk,
+            task_id=effective_task,
+            diff_id=diff_id,
+            tags=self.eval.config.tags if self.eval.config else [],
+        )
+
+        # ── Scuba: log regression if baseline failed ──────────────────
+        if not passed_baseline:
+            self._scuba.log_eval_regression(
+                eval_name=self.eval.name,
+                run_id=run_id,
+                eval_version=eval_version,
+                primary_score=primary_score,
+                metrics=metrics,
+                gk_name=effective_gk,
+                task_id=effective_task,
+            )
 
         return results
 
@@ -247,13 +337,15 @@ class SimpleEvalRunner:
             scores.append(result.score)
 
             if not result.passed:
-                failures.append({
-                    "id": f"test_{i}",
-                    "input": input_text,
-                    "expected": expected,
-                    "actual": actual,
-                    "score": result.score,
-                })
+                failures.append(
+                    {
+                        "id": f"test_{i}",
+                        "input": input_text,
+                        "expected": expected,
+                        "actual": actual,
+                        "score": result.score,
+                    }
+                )
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
         pass_rate = sum(1 for s in scores if s >= 0.5) / len(scores) if scores else 0.0

@@ -8,12 +8,13 @@ Every eval must define:
 - What threshold is acceptable to ship
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Union
+
 import yaml
-import json
 
 
 class EvalStatus(Enum):
@@ -25,6 +26,7 @@ class EvalStatus(Enum):
 @dataclass
 class EvalOwner:
     """Ownership information for an eval"""
+
     pm: str
     eng: str
     team: str = ""
@@ -33,6 +35,7 @@ class EvalOwner:
 @dataclass
 class Threshold:
     """Threshold configuration for pass/fail determination"""
+
     baseline: Dict[str, float]
     target: Dict[str, float]
     blocking: bool = False  # If True, blocks deploy when below baseline
@@ -41,6 +44,7 @@ class Threshold:
 @dataclass
 class AutomationConfig:
     """Automation settings for the eval"""
+
     schedule: Optional[str] = None  # Cron expression
     ci_integration: bool = False
     alert_on_regression: bool = False
@@ -74,7 +78,7 @@ class EvalConfig:
 
     # Capability
     capability_what: str = ""  # Precise behavior being tested
-    capability_why: str = ""   # Why this matters for users/business
+    capability_why: str = ""  # Why this matters for users/business
 
     # Dataset
     dataset_source: str = ""  # hive://path, gsheet://url, or local path
@@ -95,10 +99,18 @@ class EvalConfig:
     status: EvalStatus = EvalStatus.DRAFT
     created_at: Optional[datetime] = None
 
+    # Launch tracking — links eval to code and feature flags
+    gk_name: str = ""  # Gatekeeper feature flag name
+    task_id: str = ""  # Phabricator task ID (e.g., T123456789)
+    diff_ids: List[str] = field(
+        default_factory=list
+    )  # Associated diffs (e.g., D987654321)
+    feature_name: str = ""  # Human-readable feature name for launch tracking
+
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "EvalConfig":
         """Load config from YAML file"""
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path, "r") as f:
             data = yaml.safe_load(f)
         return cls._from_dict(data)
 
@@ -111,26 +123,38 @@ class EvalConfig:
     def _from_dict(cls, data: Dict[str, Any]) -> "EvalConfig":
         """Internal method to parse dict into EvalConfig"""
         owner_data = data.get("owner", {})
-        owner = EvalOwner(
-            pm=owner_data.get("pm", ""),
-            eng=owner_data.get("eng", ""),
-            team=data.get("team", "")
-        ) if owner_data else None
+        owner = (
+            EvalOwner(
+                pm=owner_data.get("pm", ""),
+                eng=owner_data.get("eng", ""),
+                team=data.get("team", ""),
+            )
+            if owner_data
+            else None
+        )
 
         threshold_data = data.get("thresholds", {})
-        thresholds = Threshold(
-            baseline=threshold_data.get("baseline", {}),
-            target=threshold_data.get("target", {}),
-            blocking=threshold_data.get("blocking", False)
-        ) if threshold_data else None
+        thresholds = (
+            Threshold(
+                baseline=threshold_data.get("baseline", {}),
+                target=threshold_data.get("target", {}),
+                blocking=threshold_data.get("blocking", False),
+            )
+            if threshold_data
+            else None
+        )
 
         automation_data = data.get("automation", {})
-        automation = AutomationConfig(
-            schedule=automation_data.get("schedule"),
-            ci_integration=automation_data.get("ci_integration", False),
-            alert_on_regression=automation_data.get("alert_on_regression", False),
-            alert_channel=automation_data.get("alert_channel")
-        ) if automation_data else None
+        automation = (
+            AutomationConfig(
+                schedule=automation_data.get("schedule"),
+                ci_integration=automation_data.get("ci_integration", False),
+                alert_on_regression=automation_data.get("alert_on_regression", False),
+                alert_channel=automation_data.get("alert_channel"),
+            )
+            if automation_data
+            else None
+        )
 
         scoring = data.get("scoring", {})
 
@@ -149,7 +173,17 @@ class EvalConfig:
             automation=automation,
             tags=data.get("tags", []),
             status=EvalStatus(data.get("status", "draft")),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if data.get("created_at")
+                else None
+            ),
+            gk_name=data.get("launch", {}).get("gk_name", data.get("gk_name", "")),
+            task_id=data.get("launch", {}).get("task_id", data.get("task_id", "")),
+            diff_ids=data.get("launch", {}).get("diff_ids", data.get("diff_ids", [])),
+            feature_name=data.get("launch", {}).get(
+                "feature_name", data.get("feature_name", "")
+            ),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -182,9 +216,21 @@ class EvalConfig:
             },
             "automation": {
                 "schedule": self.automation.schedule if self.automation else None,
-                "ci_integration": self.automation.ci_integration if self.automation else False,
-                "alert_on_regression": self.automation.alert_on_regression if self.automation else False,
-                "alert_channel": self.automation.alert_channel if self.automation else None,
+                "ci_integration": (
+                    self.automation.ci_integration if self.automation else False
+                ),
+                "alert_on_regression": (
+                    self.automation.alert_on_regression if self.automation else False
+                ),
+                "alert_channel": (
+                    self.automation.alert_channel if self.automation else None
+                ),
+            },
+            "launch": {
+                "gk_name": self.gk_name,
+                "task_id": self.task_id,
+                "diff_ids": self.diff_ids,
+                "feature_name": self.feature_name,
             },
             "tags": self.tags,
             "status": self.status.value,
@@ -193,7 +239,7 @@ class EvalConfig:
 
     def to_yaml(self, path: str) -> None:
         """Save config to YAML file"""
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
 
     def validate(self) -> List[str]:
@@ -213,13 +259,17 @@ class EvalConfig:
             errors.append("Eval name is required")
 
         if not self.description:
-            errors.append("Description is required - what problem does this eval validate?")
+            errors.append(
+                "Description is required - what problem does this eval validate?"
+            )
 
         if not self.dataset_source:
             errors.append("Dataset source is required")
 
         if not self.thresholds or not self.thresholds.baseline:
-            errors.append("Baseline thresholds are required - what score is acceptable to ship?")
+            errors.append(
+                "Baseline thresholds are required - what score is acceptable to ship?"
+            )
 
         if not self.owner or (not self.owner.pm and not self.owner.eng):
             errors.append("Owner (PM or Eng) is required")
