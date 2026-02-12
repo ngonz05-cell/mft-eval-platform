@@ -1,8 +1,11 @@
 """
 FastAPI server for the MFT Eval Platform.
 
-Provides endpoints for the guided eval builder chat interface,
-proxying LLM calls to Claude Sonnet 4.5 via Meta's Llama API.
+Provides endpoints for:
+  - Guided eval builder chat interface (LLM proxy)
+  - Eval CRUD (create, read, update, delete)
+  - Eval run execution and results
+  - Dry-run metric validation
 """
 
 import logging
@@ -20,10 +23,14 @@ from .llm import (
 from .schema import (
     ChatRequest,
     ChatResponse,
+    CreateEvalRequest,
     GenerateMetricsRequest,
     MetricsResponse,
     Phase,
     RefinedPromptResponse,
+    RunEvalRequest,
+    UpdateEvalRequest,
+    ValidateMetricsRequest,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +39,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="MFT Eval Platform API",
     description="Backend for the guided eval builder — proxies LLM calls to Claude via Llama API",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -44,6 +51,17 @@ app.add_middleware(
 )
 
 
+# ─── Startup: initialize database ────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup_event():
+    from mft_evals.storage import init_db
+    init_db()
+    logger.info("Database initialized")
+
+
+# ─── Health Check ─────────────────────────────────────────────────────────────
+
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
@@ -54,14 +72,12 @@ async def health():
     }
 
 
+# ─── Chat / LLM Endpoints ────────────────────────────────────────────────────
+
 @app.post("/api/chat", response_model=None)
 async def chat(request: ChatRequest):
     """
     Main chat endpoint. Routes to the appropriate LLM handler based on the current phase.
-
-    - OBJECTIVE phase: Handles initial description → returns refined prompt + clarifying questions
-    - REFINE phase: Handles follow-up context → returns updated refined prompt
-    - METRICS/AUTOMATION/REVIEW phases: General chat for config adjustments
     """
     try:
         if request.phase == Phase.OBJECTIVE:
@@ -92,10 +108,7 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/generate-metrics", response_model=MetricsResponse)
 async def gen_metrics(request: GenerateMetricsRequest):
-    """
-    Generate metrics from a finalized description.
-    Called when the user confirms their refined prompt.
-    """
+    """Generate metrics from a finalized description."""
     try:
         return await generate_metrics(request)
     except Exception as e:
@@ -105,10 +118,7 @@ async def gen_metrics(request: GenerateMetricsRequest):
 
 @app.post("/api/update-system-prompt")
 async def update_system_prompt(body: dict):
-    """
-    Hot-reload the system prompt without restarting the server.
-    Useful for iterating on the prompt during development.
-    """
+    """Hot-reload the system prompt without restarting the server."""
     from . import config
 
     new_prompt = body.get("system_prompt", "")
@@ -118,6 +128,158 @@ async def update_system_prompt(body: dict):
     logger.info(f"System prompt updated ({len(new_prompt)} chars)")
     return {"status": "ok", "prompt_length": len(new_prompt)}
 
+
+# ─── Eval CRUD Endpoints ─────────────────────────────────────────────────────
+
+@app.post("/api/evals")
+async def create_eval(request: CreateEvalRequest):
+    """Create a new eval from the frontend evalConfig."""
+    try:
+        from mft_evals.storage import create_eval as db_create
+        eval_record = db_create(request.eval_config)
+        return {"status": "ok", "eval": eval_record}
+    except Exception as e:
+        logger.error(f"Create eval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/evals")
+async def list_evals(team: str = None, status: str = None, limit: int = 50, offset: int = 0):
+    """List all evals with optional filtering."""
+    try:
+        from mft_evals.storage import list_evals as db_list
+        evals = db_list(team=team, status=status, limit=limit, offset=offset)
+        return {"evals": evals, "count": len(evals)}
+    except Exception as e:
+        logger.error(f"List evals error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/evals/{eval_id}")
+async def get_eval(eval_id: str):
+    """Get a single eval by ID."""
+    from mft_evals.storage import get_eval as db_get
+    eval_record = db_get(eval_id)
+    if not eval_record:
+        raise HTTPException(status_code=404, detail=f"Eval not found: {eval_id}")
+    return {"eval": eval_record}
+
+
+@app.patch("/api/evals/{eval_id}")
+async def update_eval(eval_id: str, request: UpdateEvalRequest):
+    """Update an eval's configuration."""
+    try:
+        from mft_evals.storage import update_eval as db_update
+        updated = db_update(eval_id, request.updates)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Eval not found: {eval_id}")
+        return {"status": "ok", "eval": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update eval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/evals/{eval_id}")
+async def delete_eval(eval_id: str):
+    """Delete an eval and all its runs."""
+    from mft_evals.storage import delete_eval as db_delete
+    deleted = db_delete(eval_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Eval not found: {eval_id}")
+    return {"status": "ok", "deleted": eval_id}
+
+
+# ─── Eval Run Endpoints ──────────────────────────────────────────────────────
+
+@app.post("/api/evals/{eval_id}/run")
+async def run_eval(eval_id: str, request: RunEvalRequest = None):
+    """
+    Trigger an eval run. Executes the eval against the configured
+    dataset and model, scores results, and stores them.
+    """
+    try:
+        from mft_evals.eval_service import execute_eval_run
+        trigger = request.trigger if request else "manual"
+        result = await execute_eval_run(eval_id, trigger=trigger)
+        return {"status": "ok", "run": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Run eval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Eval run failed: {str(e)}")
+
+
+@app.get("/api/evals/{eval_id}/runs")
+async def list_runs(eval_id: str, status: str = None, limit: int = 20, offset: int = 0):
+    """List all runs for an eval."""
+    try:
+        from mft_evals.storage import list_runs as db_list_runs
+        runs = db_list_runs(eval_id, status=status, limit=limit, offset=offset)
+        return {"runs": runs, "count": len(runs)}
+    except Exception as e:
+        logger.error(f"List runs error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/runs/{run_id}")
+async def get_run(run_id: str):
+    """Get a single run by ID with full results."""
+    from mft_evals.storage import get_run as db_get_run
+    run = db_get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    return {"run": run}
+
+
+@app.get("/api/runs/{run_id}/results")
+async def get_run_results(run_id: str):
+    """Get detailed results for a run (per-example scores, failures)."""
+    from mft_evals.storage import get_run as db_get_run
+    run = db_get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    return {
+        "run_id": run_id,
+        "status": run.get("status"),
+        "primary_score": run.get("primary_score"),
+        "pass_rate": run.get("pass_rate"),
+        "metrics": run.get("metrics"),
+        "num_examples": run.get("num_examples"),
+        "num_passed": run.get("num_passed"),
+        "num_failed": run.get("num_failed"),
+        "passed_baseline": run.get("passedBaseline"),
+        "passed_target": run.get("passedTarget"),
+        "detailed_results": run.get("detailed_results", []),
+        "failures": run.get("failures", []),
+        "duration_ms": run.get("duration_ms"),
+        "error_message": run.get("error_message"),
+    }
+
+
+# ─── Dry-Run / Validate Metrics ──────────────────────────────────────────────
+
+@app.post("/api/validate-metrics")
+async def validate_metrics(request: ValidateMetricsRequest):
+    """
+    Dry-run: validate proposed metrics against sample data.
+    Uses the LLM to assess whether metrics and thresholds are realistic.
+    """
+    try:
+        from mft_evals.eval_service import validate_metrics_against_data
+        result = await validate_metrics_against_data(
+            metrics=request.metrics,
+            sample_data=request.sample_data,
+            description=request.description,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Validate metrics error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
+
+# ─── Server Entry Point ──────────────────────────────────────────────────────
 
 def start():
     """Entry point for running the server."""

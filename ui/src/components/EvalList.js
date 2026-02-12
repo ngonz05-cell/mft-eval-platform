@@ -1,6 +1,6 @@
 import React from 'react';
 
-function EvalList({ evals, onCreateNew }) {
+function EvalList({ evals }) {
   const getScoreColor = (score) => {
     if (score === null) return '';
     if (score >= 0.9) return 'good';
@@ -12,19 +12,13 @@ function EvalList({ evals, onCreateNew }) {
     <div className="eval-list">
       <div className="eval-list-header">
         <h2>Your Evaluations</h2>
-        <button className="btn-primary" onClick={onCreateNew}>
-          <span>+</span> Create New Eval
-        </button>
       </div>
 
       {evals.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📋</div>
           <h3>No evaluations yet</h3>
-          <p>Create your first eval to start measuring AI product quality.</p>
-          <button className="btn-primary" onClick={onCreateNew}>
-            Create Your First Eval
-          </button>
+          <p>Click <strong>+ Create New</strong> in the top bar to start building your first eval.</p>
         </div>
       ) : (
         <table className="eval-table">

@@ -3,9 +3,11 @@ Pydantic schemas for structured LLM output.
 
 These define the JSON format the LLM must return at each conversation phase,
 ensuring we can reliably parse responses into evalConfig fields.
+
+Also includes request/response models for the eval runner API.
 """
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 
@@ -13,7 +15,9 @@ class Phase(str, Enum):
     OBJECTIVE = "objective"
     REFINE = "refine"
     METRICS = "metrics"
-    AUTOMATION = "automation"
+    SAMPLE_DATA = "sample_data"
+    CONNECT = "connect"
+    MANAGE = "manage"
     REVIEW = "review"
 
 
@@ -105,3 +109,62 @@ class GenerateMetricsRequest(BaseModel):
         default_factory=list,
         description="Full conversation for context"
     )
+
+
+# --- Eval CRUD schemas ---
+
+class CreateEvalRequest(BaseModel):
+    """Request body for POST /api/evals — creates a new eval from frontend evalConfig."""
+    eval_config: dict = Field(description="Full evalConfig object from the frontend")
+
+
+class UpdateEvalRequest(BaseModel):
+    """Request body for PATCH /api/evals/{id}."""
+    updates: dict = Field(description="Partial updates to apply to the eval config")
+
+
+class RunEvalRequest(BaseModel):
+    """Request body for POST /api/evals/{id}/run."""
+    trigger: str = Field(default="manual", description="What triggered this run")
+
+
+class ValidateMetricsRequest(BaseModel):
+    """Request body for POST /api/validate-metrics (dry-run)."""
+    metrics: list[dict] = Field(description="Proposed metrics to validate")
+    sample_data: list[dict] = Field(description="Sample data to validate against")
+    description: str = Field(default="", description="Eval description for context")
+
+
+class MetricFeedback(BaseModel):
+    field: str
+    status: str  # good, adjust, problematic
+    suggestion: str
+    suggested_baseline: Optional[int] = None
+    suggested_target: Optional[int] = None
+
+
+class ValidateMetricsResponse(BaseModel):
+    overall_assessment: str  # good, needs_adjustment, problematic, error
+    message: str
+    metric_feedback: list[MetricFeedback] = Field(default_factory=list)
+
+
+class EvalRunResponse(BaseModel):
+    """Response for an eval run."""
+    id: str
+    eval_id: str
+    status: str
+    primary_score: Optional[float] = None
+    pass_rate: Optional[float] = None
+    metrics: Optional[Dict[str, float]] = None
+    num_examples: Optional[int] = None
+    num_passed: Optional[int] = None
+    num_failed: Optional[int] = None
+    passed_baseline: Optional[bool] = None
+    passed_target: Optional[bool] = None
+    duration_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    detailed_results: Optional[List[Dict[str, Any]]] = None
+    failures: Optional[List[Dict[str, Any]]] = None

@@ -27,6 +27,9 @@ body {
   align-items: center;
   justify-content: space-between;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .header-logo {
@@ -1330,6 +1333,9 @@ body {
   font-weight: 600;
   margin: 0;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .guided-phase-indicator {
@@ -1350,6 +1356,16 @@ body {
   transition: all 0.3s;
 }
 
+.phase-step.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.phase-step.clickable:hover {
+  filter: brightness(0.92);
+  transform: scale(1.04);
+}
+
 .phase-step.active {
   background: #0064e0;
   color: white;
@@ -1358,6 +1374,18 @@ body {
 .phase-step.completed {
   background: #d4edda;
   color: #155724;
+}
+
+.phase-step.incomplete {
+  background: #fce4e4;
+  color: #c0392b;
+  border: 1.5px solid #e74c3c;
+}
+
+.phase-step.incomplete.active {
+  background: #e74c3c;
+  color: white;
+  border-color: #c0392b;
 }
 
 .phase-arrow {
@@ -1382,15 +1410,30 @@ body {
   overflow: hidden;
 }
 
+.guided-eval-body.single-layout {
+  flex-direction: column;
+}
+
+.guided-eval-body.split-layout {
+  flex-direction: row;
+}
+
 /* ========================================
-   Chat Panel
+   Chat Panel (LEFT side in split layout)
    ======================================== */
-.guided-chat {
+.guided-chat-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e4e6eb;
   min-width: 0;
+}
+
+.single-layout .guided-chat-panel {
+  border-right: none;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .guided-chat-messages {
@@ -1589,28 +1632,210 @@ body {
 }
 
 /* ========================================
-   Config Panel (Metrics / Automation / Review)
+   Right Panel (REFINE / METRICS / SAMPLE DATA / MANAGE / REVIEW)
    ======================================== */
-.guided-config-panel {
+.guided-right-panel {
   width: 50%;
   overflow-y: auto;
   padding: 24px;
   background: #fafbfc;
+  display: flex;
+  flex-direction: column;
 }
 
-.config-panel-header {
+.right-panel-header {
   margin-bottom: 20px;
 }
 
-.config-panel-header h3 {
+/* Metrics loading overlay */
+.guided-right-panel {
+  position: relative;
+}
+
+.metrics-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(250, 251, 252, 0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 12px;
+}
+
+.metrics-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e4e6eb;
+  border-top: 3px solid #1877f2;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.metrics-loading-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1c1e21;
+  margin-bottom: 4px;
+}
+
+.metrics-loading-subtext {
+  font-size: 13px;
+  color: #65676b;
+}
+
+/* Connect panel */
+.connect-section {
+  margin-bottom: 20px;
+}
+
+.connect-section h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #1c1e21;
+}
+
+.connect-divider {
+  border-top: 1px solid #e4e6eb;
+  padding-top: 20px;
+}
+
+.section-toggle {
+  margin-bottom: 16px;
+}
+
+.code-textarea {
+  font-family: 'SF Mono', 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 13px;
+  background: #f8f9fa;
+  border: 1px solid #dddfe2;
+  border-radius: 8px;
+  padding: 12px;
+  width: 100%;
+  resize: vertical;
+}
+
+/* Dry-run prompt overlay */
+.dry-run-prompt-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 12px;
+}
+
+.dry-run-prompt-card {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  text-align: center;
+}
+
+.dry-run-prompt-card h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.dry-run-prompt-card p {
+  font-size: 14px;
+  color: #65676b;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.dry-run-prompt-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.dry-run-prompt-actions .btn-primary:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.right-panel-header h3 {
   font-size: 18px;
   font-weight: 600;
   margin-bottom: 4px;
 }
 
-.config-panel-header p {
+.right-panel-header p {
   font-size: 13px;
   color: #65676b;
+}
+
+.right-panel-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.right-panel-cta {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e4e6eb;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.right-panel-cta .btn-primary {
+  padding: 10px 24px;
+  font-weight: 600;
+}
+
+/* File upload zone */
+.file-upload-zone {
+  border: 2px dashed #ccd0d5;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  background: white;
+}
+
+.file-upload-hint {
+  font-size: 12px;
+  color: #65676b;
+  margin-top: 8px;
+}
+
+.file-upload-hint code {
+  background: #f0f2f5;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: #65676b;
+  margin-top: 4px;
+}
+
+/* Sample data table */
+.sample-data-table input {
+  width: 100%;
+  font-size: 13px;
+  padding: 6px 8px;
 }
 
 .guided-basics-row {
@@ -1622,6 +1847,8 @@ body {
 
 .guided-metrics-table {
   font-size: 13px;
+  table-layout: fixed;
+  width: 100%;
 }
 
 .guided-metrics-table th {
@@ -1633,24 +1860,31 @@ body {
   padding: 8px 10px;
 }
 
-.guided-metrics-table .metric-field-input,
-.guided-metrics-table .metric-desc-input {
-  font-size: 13px;
-  padding: 6px 8px;
+/* Column widths for 4-col layout (no Description) */
+.guided-metrics-table .col-metric { width: 35%; }
+.guided-metrics-table .col-measurement { width: 30%; }
+.guided-metrics-table .col-baseline { width: 12%; }
+.guided-metrics-table .col-target { width: 12%; }
+.guided-metrics-table .col-action { width: 11%; }
+
+.guided-metrics-table .metric-field-input {
+  font-size: 14px;
+  padding: 8px 10px;
+  width: 100%;
 }
 
 .guided-metrics-table .threshold-input {
-  width: 65px;
-  font-size: 13px;
-  padding: 6px 8px;
+  width: 100%;
+  font-size: 14px;
+  padding: 8px 10px;
 }
 
 .metric-measurement-select {
   width: 100%;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid #e4e6eb;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 14px;
   background: white;
 }
 
@@ -1660,12 +1894,7 @@ body {
   box-shadow: 0 0 0 2px rgba(0, 100, 224, 0.1);
 }
 
-.config-panel-actions {
-  margin-top: 24px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
+/* (right-panel-cta handles actions now) */
 
 /* Metrics Rationale */
 .metrics-rationale {
@@ -1723,17 +1952,24 @@ body {
   border-top: 1px solid #e4e6eb;
 }
 
-/* Review panel full-width override */
-.guided-review {
+.review-actions .btn-primary:disabled {
+  background: #ccd0d5;
+  color: #65676b;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Review panel */
+.guided-review-panel {
   width: 50%;
 }
 
-.guided-review .review-section {
+.guided-review-panel .review-section {
   margin-bottom: 24px;
   padding-bottom: 16px;
 }
 
-.guided-review .review-section h3 {
+.guided-review-panel .review-section h3 {
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 12px;
@@ -1741,12 +1977,12 @@ body {
   border-bottom: 1px solid #e4e6eb;
 }
 
-.guided-review .yaml-preview {
+.guided-review-panel .yaml-preview {
   max-height: 200px;
   font-size: 12px;
 }
 
-.guided-review .yaml-preview pre {
+.guided-review-panel .yaml-preview pre {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1756,25 +1992,21 @@ body {
    Responsive
    ======================================== */
 @media (max-width: 768px) {
-  .landing-cards {
-    grid-template-columns: 1fr;
-  }
-
-  .guided-eval-body {
+  .guided-eval-body.split-layout {
     flex-direction: column;
   }
 
-  .guided-chat {
+  .guided-chat-panel {
     border-right: none;
     border-bottom: 1px solid #e4e6eb;
     max-height: 50vh;
   }
 
-  .guided-config-panel {
+  .guided-right-panel {
     width: 100%;
   }
 
-  .guided-review {
+  .guided-review-panel {
     width: 100%;
   }
 

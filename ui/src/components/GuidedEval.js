@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { sendChatMessage, generateMetrics, checkHealth } from '../api';
+import { sendChatMessage, generateMetrics, checkHealth, createEval, validateMetrics, runEval } from '../api';
 
 const MEASUREMENT_OPTIONS = [
   { id: 'exact_match_ratio', name: 'Exact Match Ratio', description: '% of records where all fields match perfectly' },
@@ -40,9 +40,109 @@ const PHASES = {
   OBJECTIVE: 'objective',
   REFINE: 'refine',
   METRICS: 'metrics',
-  AUTOMATION: 'automation',
+  SAMPLE_DATA: 'sample_data',
+  CONNECT: 'connect',
+  MANAGE: 'manage',
   REVIEW: 'review',
 };
+
+// Ordered list for navigation — determines what "back" and "forward" mean
+const PHASE_ORDER = [
+  PHASES.OBJECTIVE,
+  PHASES.REFINE,
+  PHASES.METRICS,
+  PHASES.SAMPLE_DATA,
+  PHASES.CONNECT,
+  PHASES.MANAGE,
+  PHASES.REVIEW,
+];
+
+// Maps phase pills to the phases they represent
+const PILL_PHASES = {
+  describe: [PHASES.OBJECTIVE, PHASES.REFINE],
+  metrics: [PHASES.METRICS],
+  data: [PHASES.SAMPLE_DATA],
+  connect: [PHASES.CONNECT],
+  manage: [PHASES.MANAGE],
+  review: [PHASES.REVIEW],
+};
+
+function phaseIndex(p) {
+  return PHASE_ORDER.indexOf(p);
+}
+
+function previousPhase(p) {
+  const idx = phaseIndex(p);
+  return idx > 0 ? PHASE_ORDER[idx - 1] : null;
+}
+
+// --- Custom Compass SVG Avatars ---
+const CompassClassic = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="11" stroke="#1877f2" strokeWidth="1.5" fill="#f0f6ff" />
+    <circle cx="12" cy="12" r="1.5" fill="#1877f2" />
+    <polygon points="12,3 13.5,10.5 12,9 10.5,10.5" fill="#e74c3c" />
+    <polygon points="12,21 13.5,13.5 12,15 10.5,13.5" fill="#1877f2" />
+    <polygon points="3,12 10.5,10.5 9,12 10.5,13.5" fill="#65676b" />
+    <polygon points="21,12 13.5,10.5 15,12 13.5,13.5" fill="#65676b" />
+    <text x="12" y="4.5" textAnchor="middle" fontSize="3" fill="#e74c3c" fontWeight="700">N</text>
+  </svg>
+);
+
+const CompassMinimal = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="11" stroke="#1877f2" strokeWidth="2" fill="white" />
+    <path d="M12 4L14 10L12 8.5L10 10L12 4Z" fill="#1877f2" />
+    <path d="M12 20L10 14L12 15.5L14 14L12 20Z" fill="#c0d0e8" />
+    <circle cx="12" cy="12" r="1.2" fill="#1877f2" />
+    <circle cx="12" cy="12" r="8" stroke="#e4e6eb" strokeWidth="0.5" fill="none" strokeDasharray="2 2" />
+  </svg>
+);
+
+const CompassRose = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="11" stroke="#1877f2" strokeWidth="1.5" fill="#fafbfc" />
+    <polygon points="12,2.5 13,11 12,9.5 11,11" fill="#e74c3c" opacity="0.9" />
+    <polygon points="12,21.5 11,13 12,14.5 13,13" fill="#1877f2" opacity="0.7" />
+    <polygon points="2.5,12 11,11 9.5,12 11,13" fill="#1877f2" opacity="0.4" />
+    <polygon points="21.5,12 13,13 14.5,12 13,11" fill="#1877f2" opacity="0.4" />
+    <polygon points="5,5 10.5,10.5 9.5,11 10.5,10.5" fill="#c0d0e8" />
+    <polygon points="19,5 13.5,10.5 14.5,11 13.5,10.5" fill="#c0d0e8" />
+    <polygon points="5,19 10.5,13.5 11,14.5 10.5,13.5" fill="#c0d0e8" />
+    <polygon points="19,19 13.5,13.5 13,14.5 13.5,13.5" fill="#c0d0e8" />
+    <circle cx="12" cy="12" r="1.8" fill="#1877f2" />
+    <circle cx="12" cy="12" r="0.8" fill="white" />
+  </svg>
+);
+
+const CompassModern = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Outer bezel */}
+    <circle cx="12" cy="12" r="11.5" fill="#1877f2" />
+    <circle cx="12" cy="12" r="10.5" fill="#4a9af5" />
+    <circle cx="12" cy="12" r="9.5" stroke="rgba(255,255,255,0.25)" strokeWidth="0.5" fill="none" />
+    {/* Tick marks */}
+    <line x1="12" y1="2" x2="12" y2="4" stroke="white" strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="22" y1="12" x2="20" y2="12" stroke="rgba(255,255,255,0.6)" strokeWidth="0.8" strokeLinecap="round" />
+    <line x1="12" y1="22" x2="12" y2="20" stroke="rgba(255,255,255,0.6)" strokeWidth="0.8" strokeLinecap="round" />
+    <line x1="2" y1="12" x2="4" y2="12" stroke="rgba(255,255,255,0.6)" strokeWidth="0.8" strokeLinecap="round" />
+    {/* North needle — red */}
+    <polygon points="12,3.5 13.8,11 12,9.5 10.2,11" fill="#e74c3c" />
+    <polygon points="12,3.5 12,9.5 10.2,11" fill="#c0392b" />
+    {/* South needle — white */}
+    <polygon points="12,20.5 10.2,13 12,14.5 13.8,13" fill="white" />
+    <polygon points="12,20.5 12,14.5 13.8,13" fill="#dce1e6" />
+    {/* East/West needles — subtle */}
+    <polygon points="20.5,12 13,10.5 14.5,12 13,13.5" fill="rgba(255,255,255,0.3)" />
+    <polygon points="3.5,12 11,10.5 9.5,12 11,13.5" fill="rgba(255,255,255,0.3)" />
+    {/* Center pin */}
+    <circle cx="12" cy="12" r="2" fill="#1877f2" />
+    <circle cx="12" cy="12" r="1.2" fill="white" />
+  </svg>
+);
+
+// Choose which compass to use (swap here to try different variants)
+const ChatAvatar = CompassModern;
 
 function OwnerSearchInput({ onSelect }) {
   const [query, setQuery] = useState('');
@@ -111,7 +211,6 @@ function OwnerSearchInput({ onSelect }) {
   );
 }
 
-// Returns { metrics, rationale } — rationale explains WHY each metric/threshold was chosen
 function suggestMetricsWithRationale(description) {
   const desc = description.toLowerCase();
   const metrics = [];
@@ -205,58 +304,16 @@ function generateEvalName(description) {
   return words.join('_') + '_eval';
 }
 
-// Generates a refined prompt that's more specific and eval-friendly
 function generateRefinedPrompt(userMessage) {
   const desc = userMessage.toLowerCase();
-  const parts = [];
+  let refined = userMessage.trim();
+  if (!refined.endsWith('.')) refined += '.';
 
-  // Identify what the product does
-  if (desc.includes('extract') || desc.includes('parse')) {
-    parts.push('extracts structured data from unstructured inputs');
-  } else if (desc.includes('classif') || desc.includes('detect') || desc.includes('categor')) {
-    parts.push('classifies or categorizes inputs');
-  } else if (desc.includes('generat') || desc.includes('creat') || desc.includes('write') || desc.includes('stor')) {
-    parts.push('generates content or text');
-  } else if (desc.includes('summar')) {
-    parts.push('summarizes information');
-  } else if (desc.includes('respond') || desc.includes('answer') || desc.includes('chat')) {
-    parts.push('responds to user queries');
-  } else {
-    parts.push('processes inputs and produces outputs');
-  }
-
-  // Identify the domain
-  let domain = '';
-  if (desc.includes('payment') || desc.includes('transaction') || desc.includes('money') || desc.includes('dollar')) domain = 'in the payments/financial domain';
-  else if (desc.includes('fraud') || desc.includes('risk')) domain = 'for fraud/risk detection';
-  else if (desc.includes('child') || desc.includes('kid') || desc.includes('age') || desc.includes('stor')) domain = 'for a children/family audience';
-  else if (desc.includes('customer') || desc.includes('support')) domain = 'for customer support';
-  else if (desc.includes('compli') || desc.includes('legal') || desc.includes('regulat')) domain = 'in a compliance/regulatory context';
-  if (domain) parts.push(domain);
-
-  // Identify success criteria hints
-  const successCriteria = [];
-  if (desc.includes('accur')) successCriteria.push('accuracy of outputs');
-  if (desc.includes('safe') || desc.includes('appropriate')) successCriteria.push('content safety and appropriateness');
-  if (desc.includes('quality')) successCriteria.push('output quality');
-  if (desc.includes('fast') || desc.includes('latency') || desc.includes('speed')) successCriteria.push('response speed/latency');
-  if (desc.includes('correct')) successCriteria.push('correctness of results');
-
-  // Build refined prompt
-  let refined = userMessage;
-
-  // Only refine if there's room for improvement
-  const isAlreadyDetailed = userMessage.length > 100 && successCriteria.length >= 2;
+  const isAlreadyDetailed = userMessage.length > 100;
   if (!isAlreadyDetailed) {
-    refined = userMessage.trim();
-    if (!refined.endsWith('.')) refined += '.';
-
-    // Add specificity about what to measure if not already mentioned
     if (!desc.includes('measure') && !desc.includes('eval') && !desc.includes('metric') && !desc.includes('accur')) {
       refined += ' I want to measure the accuracy and quality of its outputs.';
     }
-
-    // Add specificity about failure modes if not mentioned
     if (!desc.includes('wrong') && !desc.includes('fail') && !desc.includes('error') && !desc.includes('miss') && !desc.includes('incorrect')) {
       if (desc.includes('extract') || desc.includes('parse')) {
         refined += ' Key failure modes include extracting wrong values, missing fields, or incorrect formatting.';
@@ -264,8 +321,6 @@ function generateRefinedPrompt(userMessage) {
         refined += ' Key failure modes include false positives, false negatives, and misclassifications.';
       } else if (desc.includes('generat') || desc.includes('creat') || desc.includes('stor')) {
         refined += ' Key failure modes include factual inaccuracies, quality issues, or inappropriate content.';
-      } else if (desc.includes('safe') || desc.includes('child') || desc.includes('kid')) {
-        refined += ' Key failure modes include generating unsafe, inappropriate, or age-inappropriate content.';
       }
     }
   }
@@ -273,48 +328,41 @@ function generateRefinedPrompt(userMessage) {
   return refined;
 }
 
-// Generate clarifying questions based on what's missing from the description
+// Offline fallback: generate clarifying questions based on what's missing from the description
+// eslint-disable-next-line no-unused-vars
 function generateClarifyingQuestions(userMessage) {
   const desc = userMessage.toLowerCase();
   const questions = [];
 
-  // Check for missing specifics
   if (!desc.includes('input') && !desc.includes('from') && !desc.includes('take') && !desc.includes('receive') && !desc.includes('process')) {
     questions.push('What are the **inputs** to your system? (e.g., raw text, images, structured data, user queries)');
   }
-
   if (!desc.includes('output') && !desc.includes('return') && !desc.includes('produce') && !desc.includes('generat') && !desc.includes('extract') && !desc.includes('classif') && !desc.includes('creat')) {
     questions.push('What does your system **output**? (e.g., extracted fields, classifications, generated text, scores)');
   }
-
   if (!desc.includes('wrong') && !desc.includes('fail') && !desc.includes('error') && !desc.includes('miss') && !desc.includes('bad') && !desc.includes('incorrect') && !desc.includes('risk')) {
     questions.push('What are the **biggest risks** if it gets something wrong? (e.g., financial loss, user harm, compliance violation)');
   }
-
   if (!desc.includes('how many') && !desc.includes('volume') && !desc.includes('scale') && !desc.includes('production') && !desc.includes('traffic')) {
     questions.push('Roughly how much **volume** does this handle? (helps calibrate sampling & thresholds)');
   }
-
-  // Domain-specific questions
   if (desc.includes('child') || desc.includes('kid') || desc.includes('age')) {
     if (!desc.includes('guideline') && !desc.includes('policy') && !desc.includes('rule')) {
       questions.push('Are there specific **content guidelines or policies** that define what\'s appropriate for this age group?');
     }
   }
-
   if (desc.includes('payment') || desc.includes('transaction') || desc.includes('amount')) {
     if (!desc.includes('tolerance') && !desc.includes('precision') && !desc.includes('decimal')) {
       questions.push('What **numeric precision** matters? (e.g., exact cents, or is rounding to dollars acceptable?)');
     }
   }
-
   if (desc.includes('classif') || desc.includes('detect') || desc.includes('fraud')) {
     if (!desc.includes('false positive') && !desc.includes('false negative')) {
       questions.push('Which is worse: **false positives** (flagging good items) or **false negatives** (missing bad items)?');
     }
   }
 
-  return questions.slice(0, 3); // Max 3 clarifying questions
+  return questions.slice(0, 3);
 }
 
 function buildAssistantResponse(phase, userMessage, evalConfig) {
@@ -328,17 +376,14 @@ function buildAssistantResponse(phase, userMessage, evalConfig) {
       };
     }
 
-    // User gave a real description — suggest a refined prompt + ask clarifying questions
     const refinedPrompt = generateRefinedPrompt(userMessage);
-    const questions = generateClarifyingQuestions(userMessage);
-    const isAlreadyGood = refinedPrompt === userMessage && questions.length === 0;
+    const isAlreadyGood = userMessage.length > 200;
 
     if (isAlreadyGood) {
-      // Description is already detailed — skip refinement, go to metrics
       const { metrics, rationale } = suggestMetricsWithRationale(userMessage);
       const suggestedName = generateEvalName(userMessage);
       return {
-        text: `This is a really detailed description — nice work! I have everything I need to suggest metrics.\n\n👇 **Review the suggested metrics below** — I've included explanations for why each was chosen. Everything is editable.`,
+        text: `This is a really detailed description — nice work! I have everything I need to suggest metrics.\n\n👇 **Review the suggested metrics on the right** — I've included explanations for why each was chosen. Everything is editable.`,
         phase: PHASES.METRICS,
         configUpdates: {
           capabilityWhat: userMessage,
@@ -355,21 +400,8 @@ function buildAssistantResponse(phase, userMessage, evalConfig) {
     }
 
     let responseText = `Thanks! Here's what I'm hearing:\n\n> ${userMessage}\n\n`;
-
-    if (questions.length > 0) {
-      responseText += `Before I suggest metrics, I have a few clarifying questions:\n\n`;
-      questions.forEach((q, i) => {
-        responseText += `${i + 1}. ${q}\n`;
-      });
-      responseText += `\n`;
-    }
-
-    if (refinedPrompt !== userMessage) {
-      responseText += `Based on what you've told me, here's a **refined description** that will help me suggest better metrics:\n\n`;
-      responseText += `👇 **Edit the refined prompt below** if anything needs adjusting, then click **"Use This & Generate Metrics"** when you're happy with it.`;
-    } else {
-      responseText += `👇 **Review your description below** — you can edit it to add more detail. Then click **"Use This & Generate Metrics"** when ready.`;
-    }
+    responseText += `I've drafted a **refined description** on the right panel that adds more specificity for eval design.\n\n`;
+    responseText += `👉 **Review and edit it**, then click **"Use This & Generate Metrics"** when you're ready — or keep chatting here to refine further.`;
 
     return {
       text: responseText,
@@ -382,14 +414,12 @@ function buildAssistantResponse(phase, userMessage, evalConfig) {
   }
 
   if (phase === PHASES.REFINE) {
-    // User sent a follow-up message during the refine phase (answering clarifying questions)
     const currentPrompt = evalConfig.refinedPrompt || evalConfig.capabilityWhat || '';
-    const additionalContext = userMessage;
-    const combinedDescription = currentPrompt.replace(/\.$/, '') + '. ' + additionalContext;
+    const combinedDescription = currentPrompt.replace(/\.$/, '') + '. ' + userMessage;
     const newRefined = generateRefinedPrompt(combinedDescription);
 
     return {
-      text: `Got it! I've incorporated your answers into the refined description below. Take a look and click **"Use This & Generate Metrics"** when you're ready.`,
+      text: `Got it! I've updated the refined description on the right with your new details. Take a look and click **"Use This & Generate Metrics"** when you're ready.`,
       phase: PHASES.REFINE,
       configUpdates: {
         refinedPrompt: newRefined,
@@ -399,15 +429,22 @@ function buildAssistantResponse(phase, userMessage, evalConfig) {
 
   if (phase === PHASES.METRICS) {
     return {
-      text: "I've updated the configuration based on your feedback. Take another look at the metrics below and let me know if everything looks right, or click **\"Looks Good, Continue\"** to move on to ownership and automation settings.",
+      text: "I've updated the configuration based on your feedback. Take another look at the metrics on the right and let me know if everything looks right, or click **\"Looks Good, Continue\"** to move on.",
       phase: PHASES.METRICS,
     };
   }
 
-  if (phase === PHASES.AUTOMATION) {
+  if (phase === PHASES.SAMPLE_DATA) {
     return {
-      text: "Automation settings updated! Review the schedule and alert configuration below. When you're ready, click **\"Looks Good, Review Final Draft\"** to see the complete eval config.",
-      phase: PHASES.AUTOMATION,
+      text: "Got it! Update your sample data settings on the right panel. When you're ready, click **\"Continue to Manage\"** to set up ownership and automation.",
+      phase: PHASES.SAMPLE_DATA,
+    };
+  }
+
+  if (phase === PHASES.MANAGE) {
+    return {
+      text: "Settings updated! Review the ownership and automation config on the right. When you're ready, click **\"Review Final Draft\"** to see everything together.",
+      phase: PHASES.MANAGE,
     };
   }
 
@@ -450,17 +487,34 @@ function getRotatingExample() {
 
 function GuidedEval({ onComplete, onCancel }) {
   const [example] = useState(() => getRotatingExample());
-  const [phase, setPhase] = useState(PHASES.OBJECTIVE);
+  const [phase, setPhaseRaw] = useState(PHASES.OBJECTIVE);
+  const [highestPhase, setHighestPhase] = useState(PHASES.OBJECTIVE);
+
+  // Always update highestPhase when moving forward
+  const setPhase = useCallback((newPhase) => {
+    setPhaseRaw(newPhase);
+    setHighestPhase(prev => phaseIndex(newPhase) > phaseIndex(prev) ? newPhase : prev);
+  }, []);
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
+      phase: PHASES.OBJECTIVE,
       text: `👋 Hi! I'm here to help you create an eval for your new product/feature.\n\n**Tell me about it** — what user problem is it solving, what does it do, how do you want to measure success?\n\nThe more detail you provide, the better evals I can help you create.\n\n💡 **Example** (${example.product}):\n> ${example.example}`,
     },
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isGeneratingMetrics, setIsGeneratingMetrics] = useState(false);
+  const [showDryRunPrompt, setShowDryRunPrompt] = useState(false);
+  const [dryRunDone, setDryRunDone] = useState(false);
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createdEvalId, setCreatedEvalId] = useState(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [runResult, setRunResult] = useState(null);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
+  const chatMessagesRef = useRef(null);
 
   const [evalConfig, setEvalConfig] = useState({
     name: '',
@@ -478,7 +532,25 @@ function GuidedEval({ onComplete, onCancel }) {
     datasetSource: 'csv',
     datasetFile: null,
     datasetUrl: '',
-    datasetSize: 50,
+    datasetSize: 20,
+    sampleData: [],
+    sampleDataFormat: 'json',
+    // Model connection
+    modelEndpoint: '',
+    modelAuthType: 'none',
+    modelApiKey: '',
+    modelRequestFormat: 'openai_chat',
+    modelRequestTemplate: '',
+    modelResponsePath: 'choices[0].message.content',
+    // Production log source
+    prodLogEnabled: false,
+    prodLogSource: 'scuba',
+    prodLogTable: '',
+    prodLogInputColumn: '',
+    prodLogOutputColumn: '',
+    prodLogTimestampColumn: '',
+    prodLogSampleRate: 10,
+    // Manage
     scoringMethod: 'simple',
     selectedScorers: [],
     baselineThreshold: 80,
@@ -494,6 +566,42 @@ function GuidedEval({ onComplete, onCancel }) {
     setEvalConfig(prev => ({ ...prev, ...updates }));
   }, []);
 
+  // Validate each section for completeness
+  const getPhaseValidation = useCallback(() => {
+    const issues = {};
+    if (!evalConfig.description && !evalConfig.capabilityWhat && !evalConfig.refinedPrompt) {
+      issues.describe = 'Missing product description';
+    }
+    if (!evalConfig.metrics.length || evalConfig.metrics.every(m => !m.field)) {
+      issues.metrics = 'No metrics defined';
+    }
+    if (evalConfig.datasetSource === 'hive' && !evalConfig.datasetUrl) {
+      issues.data = 'Missing Hive table URL';
+    }
+    if (!evalConfig.modelEndpoint) {
+      issues.connect = 'Missing model endpoint';
+    }
+    if (!evalConfig.team) {
+      issues.manage = 'Missing team assignment';
+    }
+    return issues;
+  }, [evalConfig]);
+
+  const navigateToPhase = (targetPill) => {
+    const phaseMap = {
+      describe: PHASES.OBJECTIVE,
+      metrics: PHASES.METRICS,
+      data: PHASES.SAMPLE_DATA,
+      connect: PHASES.CONNECT,
+      manage: PHASES.MANAGE,
+      review: PHASES.REVIEW,
+    };
+    const newPhase = phaseMap[targetPill];
+    if (newPhase && newPhase !== phase) {
+      setPhase(newPhase);
+    }
+  };
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
@@ -502,7 +610,6 @@ function GuidedEval({ onComplete, onCancel }) {
     inputRef.current?.focus();
   }, [phase]);
 
-  // Check if API backend is available on mount
   const [apiAvailable, setApiAvailable] = useState(false);
   useEffect(() => {
     checkHealth()
@@ -516,7 +623,6 @@ function GuidedEval({ onComplete, onCancel }) {
       });
   }, []);
 
-  // --- API-powered send (with offline fallback) ---
   const handleSend = async () => {
     if (!inputValue.trim()) return;
 
@@ -532,7 +638,11 @@ function GuidedEval({ onComplete, onCancel }) {
         if (result.type === 'refine') {
           const data = result.data;
           if (data.is_detailed_enough) {
-            // Skip refinement — go straight to generating metrics
+            setMessages(prev => [...prev, { role: 'assistant', text: data.message }]);
+            setIsTyping(false);
+            setPhase(PHASES.METRICS);
+            setIsGeneratingMetrics(true);
+
             const metricsResult = await generateMetrics(userMsg, [...messages, { role: 'user', text: userMsg }]);
             const metricsData = metricsResult;
             const metrics = metricsData.metrics.map(m => ({
@@ -543,7 +653,10 @@ function GuidedEval({ onComplete, onCancel }) {
             }));
             const rationale = metricsData.metrics.map(m => m.rationale);
 
-            setMessages(prev => [...prev, { role: 'assistant', text: data.message }]);
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              text: metricsData.message + `\n\n👉 **Review the suggested metrics on the right** — everything is editable. When you're happy, click **"Looks Good, Continue"**.`,
+            }]);
             updateConfig({
               capabilityWhat: userMsg,
               description: userMsg,
@@ -555,7 +668,7 @@ function GuidedEval({ onComplete, onCancel }) {
                 return acc;
               }, {}),
             });
-            setPhase(PHASES.METRICS);
+            setIsGeneratingMetrics(false);
           } else {
             setMessages(prev => [...prev, { role: 'assistant', text: data.message }]);
             updateConfig({
@@ -565,7 +678,6 @@ function GuidedEval({ onComplete, onCancel }) {
             setPhase(PHASES.REFINE);
           }
         } else {
-          // General chat response
           const data = result.data;
           setMessages(prev => [...prev, { role: 'assistant', text: data.message }]);
           if (data.refined_prompt) {
@@ -587,14 +699,12 @@ function GuidedEval({ onComplete, onCancel }) {
         }
       } catch (err) {
         console.error('[MFT] API error, falling back to offline:', err);
-        // Fall back to offline mode for this message
         const response = buildAssistantResponse(phase, userMsg, evalConfig);
         setMessages(prev => [...prev, { role: 'assistant', text: response.text }]);
         if (response.configUpdates) updateConfig(response.configUpdates);
         if (response.phase !== phase) setPhase(response.phase);
       }
     } else {
-      // Offline mode — use hardcoded logic
       setTimeout(() => {
         const response = buildAssistantResponse(phase, userMsg, evalConfig);
         setMessages(prev => [...prev, { role: 'assistant', text: response.text }]);
@@ -602,7 +712,7 @@ function GuidedEval({ onComplete, onCancel }) {
         if (response.phase !== phase) setPhase(response.phase);
         setIsTyping(false);
       }, 800 + Math.random() * 600);
-      return; // Early return — the setTimeout handles setIsTyping
+      return;
     }
 
     setIsTyping(false);
@@ -615,10 +725,10 @@ function GuidedEval({ onComplete, onCancel }) {
     }
   };
 
-  // User confirms the refined prompt — generate metrics and advance
   const handleConfirmRefinedPrompt = async () => {
     const finalDescription = evalConfig.refinedPrompt || evalConfig.capabilityWhat;
-    setIsTyping(true);
+    setPhase(PHASES.METRICS);
+    setIsGeneratingMetrics(true);
 
     if (apiAvailable) {
       try {
@@ -647,11 +757,10 @@ function GuidedEval({ onComplete, onCancel }) {
 
         setMessages(prev => [...prev, {
           role: 'assistant',
-          text: metricsData.message + `\n\n👇 **Review the suggested config on the right** — I've included explanations for why each metric was chosen. Everything is editable. When you're happy, click **"Looks Good, Continue"**.`,
+          text: metricsData.message + `\n\n👉 **Review the suggested metrics on the right** — everything is editable. When you're happy, click **"Looks Good, Continue"**.`,
         }]);
 
-        setPhase(PHASES.METRICS);
-        setIsTyping(false);
+        setIsGeneratingMetrics(false);
         return;
       } catch (err) {
         console.error('[MFT] API error generating metrics, falling back to offline:', err);
@@ -675,29 +784,57 @@ function GuidedEval({ onComplete, onCancel }) {
       }, {}),
     });
 
+    let rationaleMessage = `Based on your refined description, I've suggested **${metrics.length} metrics** with measurement methods and thresholds.\n\n`;
+    rationale.forEach((r) => {
+      rationaleMessage += `${r}\n\n`;
+    });
+    rationaleMessage += `👉 **Review the suggested metrics on the right** — everything is editable. When you're happy, click **"Looks Good, Continue"**.`;
+
     setMessages(prev => [...prev, {
       role: 'assistant',
-      text: `Based on your refined description, I've suggested **${metrics.length} metrics** with measurement methods and thresholds.\n\n👇 **Review the suggested config on the right** — I've included explanations for why each metric was chosen to help you understand the reasoning. Everything is editable. When you're happy, click **"Looks Good, Continue"**.`,
+      text: rationaleMessage,
     }]);
 
-    setPhase(PHASES.METRICS);
-    setIsTyping(false);
+    setIsGeneratingMetrics(false);
   };
 
   const handlePhaseAdvance = () => {
     if (phase === PHASES.METRICS) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        text: "Great! Now let's set up **ownership and automation**.\n\n- **Owner:** Defaults to you — change it if someone else should own this eval\n- **Team:** Which team does this eval belong to?\n- **Schedule:** How often should this eval run?\n- **Alerts:** Want to be notified when metrics drop below baseline?\n\n👇 Configure the settings below, or just click **\"Looks Good, Review Final Draft\"** to use the defaults.",
+        text: "Now let's **add sample data** for your eval.\n\nSample data helps validate that your metrics and thresholds work correctly before running the full eval. You can upload a CSV, paste JSON examples, or connect to a data source.\n\n👉 Configure your sample data on the right, then click **\"Continue to Connect\"** when ready.",
       }]);
-      setPhase(PHASES.AUTOMATION);
-    } else if (phase === PHASES.AUTOMATION) {
+      setPhase(PHASES.SAMPLE_DATA);
+    } else if (phase === PHASES.SAMPLE_DATA) {
+      const hasSampleData = evalConfig.sampleData && evalConfig.sampleData.length > 0;
+      const hasMetrics = evalConfig.metrics && evalConfig.metrics.length > 0;
+      if (hasSampleData && hasMetrics && !dryRunDone) {
+        setShowDryRunPrompt(true);
+        return;
+      }
+      advanceToConnect();
+    } else if (phase === PHASES.CONNECT) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        text: "🎉 **Your eval is ready for review!**\n\nI've compiled everything into a final draft below. Review each section carefully — you can still edit any field. When you're satisfied, click **\"Create Eval\"** to finalize it.",
+        text: "Let's set up **ownership and management**.\n\n- **Owner:** Defaults to you — change it if someone else should own this eval\n- **Team:** Which team does this eval belong to?\n- **Schedule:** How often should this eval run?\n- **Alerts:** Want to be notified when metrics drop below baseline?\n\n👉 Configure the settings on the right, then click **\"Review Final Draft\"** when ready.",
+      }]);
+      setPhase(PHASES.MANAGE);
+    } else if (phase === PHASES.MANAGE) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: "🎉 **Your eval is ready for review!**\n\nI've compiled everything into a final draft on the right. Review each section carefully — you can still edit any field. When you're satisfied, click **\"Create Eval\"** to finalize it.",
       }]);
       setPhase(PHASES.REVIEW);
     }
+  };
+
+  const advanceToConnect = () => {
+    setShowDryRunPrompt(false);
+    setMessages(prev => [...prev, {
+      role: 'assistant',
+      text: "Now let's **connect your model** so the eval runner knows where to send test inputs.\n\n- **Model Endpoint:** The API URL for your model or pipeline\n- **Auth:** How to authenticate (API key, OAuth, or none for internal services)\n- **Request/Response:** How to format requests and parse responses\n\nOptionally, you can also configure **production log monitoring** to continuously evaluate real traffic.\n\n👉 Configure the connection on the right, then click **\"Continue to Manage\"** when ready.",
+    }]);
+    setPhase(PHASES.CONNECT);
   };
 
   const handleMetricChange = (index, field, value) => {
@@ -730,12 +867,141 @@ function GuidedEval({ onComplete, onCancel }) {
     updateConfig({ metrics: newMetrics });
   };
 
-  const renderChat = () => (
-    <div className="guided-chat">
+  const handleAddSampleRow = () => {
+    updateConfig({
+      sampleData: [...evalConfig.sampleData, { input: '', expected_output: '', context: '' }],
+    });
+  };
+
+  const handleSampleDataChange = (index, field, value) => {
+    const newData = [...evalConfig.sampleData];
+    newData[index] = { ...newData[index], [field]: value };
+    updateConfig({ sampleData: newData });
+  };
+
+  const handleRemoveSampleRow = (index) => {
+    updateConfig({
+      sampleData: evalConfig.sampleData.filter((_, i) => i !== index),
+    });
+  };
+
+  const handleDryRun = async () => {
+    setShowDryRunPrompt(false);
+    setIsDryRunning(true);
+    setMessages(prev => [...prev, {
+      role: 'assistant',
+      text: '🔬 **Running metric validation against your sample data...**\n\nI\'m analyzing your sample data against the proposed metrics to check if the thresholds are realistic.',
+    }]);
+
+    try {
+      const result = await validateMetrics(
+        evalConfig.metrics,
+        evalConfig.sampleData.slice(0, 10),
+        evalConfig.refinedPrompt || evalConfig.description
+      );
+
+      const assessment = result.overall_assessment || 'unknown';
+      const emoji = assessment === 'good' ? '✅' : assessment === 'needs_adjustment' ? '🔶' : '⚠️';
+      let feedbackText = `${emoji} **Validation Result: ${assessment.replace(/_/g, ' ')}**\n\n${result.message || ''}\n\n`;
+
+      if (result.metric_feedback && result.metric_feedback.length > 0) {
+        feedbackText += '**Per-Metric Feedback:**\n';
+        result.metric_feedback.forEach(fb => {
+          const statusIcon = fb.status === 'good' ? '✅' : fb.status === 'adjust' ? '🔶' : '❌';
+          feedbackText += `\n${statusIcon} **${fb.field}**: ${fb.suggestion}`;
+          if (fb.suggested_baseline || fb.suggested_target) {
+            feedbackText += ` (suggested: ${fb.suggested_baseline || '?'}% → ${fb.suggested_target || '?'}%)`;
+          }
+        });
+      }
+
+      feedbackText += '\n\n👉 Review the suggestions above. You can edit metrics on the right panel, or click **"Continue to Connect"** to move on.';
+
+      setMessages(prev => [...prev, { role: 'assistant', text: feedbackText }]);
+    } catch (err) {
+      console.error('[MFT] Dry run error:', err);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: `📊 **Quick validation** (API unavailable):\n\nYou have **${evalConfig.sampleData.length} sample entries** and **${evalConfig.metrics.length} metrics** configured. Based on the data structure, your thresholds look reasonable as a starting point. I'd recommend running a full validation once the model endpoint is connected.\n\n👉 Click **"Continue to Connect"** to move on.`,
+      }]);
+    }
+    setIsDryRunning(false);
+    setDryRunDone(true);
+  };
+
+  const handleSkipDryRun = () => {
+    setShowDryRunPrompt(false);
+    setDryRunDone(true);
+    advanceToConnect();
+  };
+
+  const handleCreateEval = async () => {
+    setIsCreating(true);
+    try {
+      const result = await createEval(evalConfig);
+      const evalId = result?.eval?.id;
+      if (evalId) {
+        setCreatedEvalId(evalId);
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          text: `🎉 **Eval created successfully!** (ID: ${evalId})\n\nYour eval "${evalConfig.evalName || evalConfig.name}" has been saved. You can now run it against your data to see how your metrics perform.\n\n${evalConfig.modelEndpoint ? '👉 Click **"Run Eval"** to execute the evaluation now.' : '⚠️ No model endpoint configured — connect a model in the Connect step to enable runs.'}`,
+        }]);
+      } else {
+        onComplete(evalConfig);
+      }
+    } catch (err) {
+      console.error('[MFT] Create eval error:', err);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: `⚠️ Eval saved locally but API save failed: ${err.message}. The eval config has been preserved.`,
+      }]);
+      onComplete(evalConfig);
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleRunEval = async () => {
+    if (!createdEvalId) return;
+    setIsRunning(true);
+    setRunResult(null);
+    setMessages(prev => [...prev, {
+      role: 'assistant',
+      text: '⏳ **Running eval...**\n\nExecuting test cases against your model and scoring results. This may take a moment.',
+    }]);
+
+    try {
+      const result = await runEval(createdEvalId);
+      const run = result?.run || {};
+      setRunResult(run);
+
+      const statusEmoji = run.passed_baseline ? '✅' : '❌';
+      const metricsText = run.metrics ? Object.entries(run.metrics)
+        .map(([k, v]) => `  • ${k}: ${(v * 100).toFixed(1)}%`)
+        .join('\n') : 'No metrics recorded';
+
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: `${statusEmoji} **Eval Run Complete!**\n\n**Primary Score:** ${((run.primary_score || 0) * 100).toFixed(1)}%\n**Pass Rate:** ${((run.pass_rate || 0) * 100).toFixed(1)}% (${run.num_passed || 0}/${run.num_examples || 0})\n**Duration:** ${run.duration_ms || 0}ms\n\n**Metrics:**\n${metricsText}\n\n${!run.passed_baseline ? '⚠️ **Below baseline threshold** — consider adjusting your metrics or improving your model.' : '🎯 Passed baseline! Your eval is performing well.'}`,
+      }]);
+    } catch (err) {
+      console.error('[MFT] Run eval error:', err);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: `❌ **Eval run failed:** ${err.message}\n\nCheck your model endpoint configuration and try again.`,
+      }]);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // --- RENDER: Chat Panel (always on the left) ---
+  const renderChatPanel = () => (
+    <div className="guided-chat-panel">
       <div className="guided-chat-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`chat-message ${msg.role}`}>
-            {msg.role === 'assistant' && <div className="chat-avatar">🤖</div>}
+            {msg.role === 'assistant' && <div className="chat-avatar"><ChatAvatar size={28} /></div>}
             <div className="chat-bubble">
               {msg.text.split('\n').map((line, j) => {
                 if (line.startsWith('**') && line.endsWith('**')) {
@@ -761,7 +1027,7 @@ function GuidedEval({ onComplete, onCancel }) {
         ))}
         {isTyping && (
           <div className="chat-message assistant">
-            <div className="chat-avatar">🤖</div>
+            <div className="chat-avatar"><ChatAvatar size={28} /></div>
             <div className="chat-bubble typing">
               <span className="typing-dot"></span>
               <span className="typing-dot"></span>
@@ -771,22 +1037,6 @@ function GuidedEval({ onComplete, onCancel }) {
         )}
         <div ref={chatEndRef} />
       </div>
-
-      {/* Refined prompt editor — shown during REFINE phase */}
-      {phase === PHASES.REFINE && (
-        <div className="refined-prompt-section">
-          <label className="refined-prompt-label">✏️ Refined Description (edit as needed)</label>
-          <textarea
-            className="refined-prompt-textarea"
-            value={evalConfig.refinedPrompt}
-            onChange={(e) => updateConfig({ refinedPrompt: e.target.value })}
-            rows={4}
-          />
-          <button className="btn-primary refined-prompt-confirm" onClick={handleConfirmRefinedPrompt}>
-            Use This & Generate Metrics →
-          </button>
-        </div>
-      )}
 
       <div className="guided-chat-input">
         <textarea
@@ -805,6 +1055,457 @@ function GuidedEval({ onComplete, onCancel }) {
         />
         <button className="btn-primary chat-send-btn" onClick={handleSend} disabled={!inputValue.trim() || isTyping}>
           Send
+        </button>
+      </div>
+    </div>
+  );
+
+  // --- RENDER: Right panel for REFINE phase ---
+  const renderRefinePanel = () => (
+    <div className="guided-right-panel">
+      <div className="right-panel-header">
+        <h3>✏️ Refined Description</h3>
+        <p>Edit the description below to add more detail, then confirm to generate metrics.</p>
+      </div>
+      <div className="right-panel-content">
+        <textarea
+          className="refined-prompt-textarea"
+          value={evalConfig.refinedPrompt}
+          onChange={(e) => updateConfig({ refinedPrompt: e.target.value })}
+          rows={8}
+        />
+      </div>
+      <div className="right-panel-cta">
+        <button className="btn-primary" onClick={handleConfirmRefinedPrompt} disabled={isGeneratingMetrics}>
+          Use This & Generate Metrics →
+        </button>
+      </div>
+    </div>
+  );
+
+  // --- RENDER: Right panel for METRICS phase ---
+  const renderMetricsPanel = () => (
+    <div className="guided-right-panel">
+      {isGeneratingMetrics && (
+        <div className="metrics-loading-overlay">
+          <div className="metrics-loading-spinner"></div>
+          <p className="metrics-loading-text">Generating metrics…</p>
+          <p className="metrics-loading-subtext">Analyzing your description and selecting measurement methods</p>
+        </div>
+      )}
+      <div className="right-panel-header">
+        <h3>📊 Suggested Metrics & Thresholds</h3>
+        <p>Edit any field below. Add or remove metrics as needed.</p>
+      </div>
+      <div className="right-panel-content">
+        <div className="form-group">
+          <label>Eval Name</label>
+          <input
+            type="text"
+            value={evalConfig.name}
+            onChange={(e) => updateConfig({ name: e.target.value })}
+            placeholder="my_eval_name"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>Description</label>
+          <textarea
+            value={evalConfig.description}
+            onChange={(e) => updateConfig({ description: e.target.value })}
+            rows={2}
+            placeholder="What does this eval measure?"
+          />
+        </div>
+
+        <table className="metrics-table guided-metrics-table">
+          <thead>
+            <tr>
+              <th className="col-metric">Metric</th>
+              <th className="col-measurement">Measurement</th>
+              <th className="col-baseline">Baseline %</th>
+              <th className="col-target">Target %</th>
+              <th className="col-action"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {evalConfig.metrics.map((metric, i) => (
+              <tr key={i}>
+                <td>
+                  <input
+                    type="text"
+                    className="metric-field-input"
+                    value={metric.field}
+                    onChange={(e) => handleMetricChange(i, 'field', e.target.value)}
+                    placeholder="Metric name"
+                  />
+                </td>
+                <td>
+                  <select
+                    value={metric.measurement?.[0] || ''}
+                    onChange={(e) => handleMetricChange(i, 'measurement', e.target.value ? [e.target.value] : [])}
+                    className="metric-measurement-select"
+                  >
+                    <option value="">Select...</option>
+                    {MEASUREMENT_OPTIONS.map(o => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    className="threshold-input"
+                    min="0" max="100"
+                    value={metric.thresholds?.baseline || 80}
+                    onChange={(e) => handleThresholdChange(i, 'baseline', e.target.value)}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    className="threshold-input"
+                    min="0" max="100"
+                    value={metric.thresholds?.target || 95}
+                    onChange={(e) => handleThresholdChange(i, 'target', e.target.value)}
+                  />
+                </td>
+                <td>
+                  <button className="btn-remove" onClick={() => handleRemoveMetric(i)} title="Remove">✕</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <button className="btn-secondary add-metric-btn" onClick={handleAddMetric}>
+          + Add Metric
+        </button>
+      </div>
+      <div className="right-panel-cta">
+        <button className="btn-primary" onClick={handlePhaseAdvance}>
+          Looks Good, Continue →
+        </button>
+      </div>
+    </div>
+  );
+
+  // --- RENDER: Right panel for SAMPLE DATA phase ---
+  const renderSampleDataPanel = () => (
+    <div className="guided-right-panel">
+      <div className="right-panel-header">
+        <h3>🗂️ Sample Data</h3>
+        <p>Add sample input/output pairs to validate your eval config. Aim for 5-10 representative examples.</p>
+      </div>
+      <div className="right-panel-content">
+        <div className="form-group">
+          <label>Data Source</label>
+          <select value={evalConfig.datasetSource} onChange={(e) => updateConfig({ datasetSource: e.target.value })}>
+            <option value="csv">CSV File Upload</option>
+            <option value="manual">Manual Entry</option>
+            <option value="gsheet">Google Sheet</option>
+            <option value="hive">Hive Table</option>
+          </select>
+        </div>
+
+        {evalConfig.datasetSource === 'manual' && (
+          <>
+            <table className="metrics-table guided-metrics-table sample-data-table">
+              <thead>
+                <tr>
+                  <th>Input</th>
+                  <th>Expected Output</th>
+                  <th>Context (optional)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(evalConfig.sampleData || []).map((row, i) => (
+                  <tr key={i}>
+                    <td>
+                      <input
+                        type="text"
+                        value={row.input}
+                        onChange={(e) => handleSampleDataChange(i, 'input', e.target.value)}
+                        placeholder="e.g., 'Paid $42.50 at Starbucks'"
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={row.expected_output}
+                        onChange={(e) => handleSampleDataChange(i, 'expected_output', e.target.value)}
+                        placeholder='e.g., {"amount": 42.50, "merchant": "Starbucks"}'
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={row.context || ''}
+                        onChange={(e) => handleSampleDataChange(i, 'context', e.target.value)}
+                        placeholder="Additional context..."
+                      />
+                    </td>
+                    <td>
+                      <button className="btn-remove" onClick={() => handleRemoveSampleRow(i)}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button className="btn-secondary add-metric-btn" onClick={handleAddSampleRow}>
+              + Add Row
+            </button>
+          </>
+        )}
+
+        {evalConfig.datasetSource === 'csv' && (
+          <div className="form-group">
+            <label>Upload CSV</label>
+            <div className="file-upload-zone">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => updateConfig({ datasetFile: e.target.files[0] })}
+              />
+              <p className="file-upload-hint">
+                CSV should have columns: <code>input</code>, <code>expected_output</code>, and optionally <code>context</code>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {evalConfig.datasetSource === 'gsheet' && (
+          <div className="form-group">
+            <label>Google Sheet URL</label>
+            <input
+              type="text"
+              placeholder="https://docs.google.com/spreadsheets/d/..."
+              value={evalConfig.datasetUrl}
+              onChange={(e) => updateConfig({ datasetUrl: e.target.value })}
+            />
+          </div>
+        )}
+
+        {evalConfig.datasetSource === 'hive' && (
+          <div className="form-group">
+            <label>Hive Table</label>
+            <input
+              type="text"
+              placeholder="database.table_name"
+              value={evalConfig.datasetUrl}
+              onChange={(e) => updateConfig({ datasetUrl: e.target.value })}
+            />
+          </div>
+        )}
+
+        <div className="form-group">
+          <label>Target Dataset Size</label>
+          <input
+            type="number"
+            min="10"
+            max="10000"
+            value={evalConfig.datasetSize}
+            onChange={(e) => updateConfig({ datasetSize: parseInt(e.target.value) || 20 })}
+          />
+          <p className="form-hint">Minimum 20 examples for directional signal. 50+ recommended for reliable results. 100+ for high-confidence benchmarking.</p>
+        </div>
+      </div>
+      {showDryRunPrompt && (
+        <div className="dry-run-prompt-overlay">
+          <div className="dry-run-prompt-card">
+            <h4>🔬 Validate metrics against sample data?</h4>
+            <p>I can analyze your sample data against the proposed metrics to check if the thresholds are realistic and suggest refinements.</p>
+            <div className="dry-run-prompt-actions">
+              <button className="btn-secondary" onClick={handleSkipDryRun}>Skip for now</button>
+              <button className="btn-primary" onClick={handleDryRun} disabled={isDryRunning}>
+                {isDryRunning ? 'Validating...' : 'Yes, validate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="right-panel-cta">
+        <button className="btn-primary" onClick={handlePhaseAdvance} disabled={isDryRunning}>
+          Continue to Connect →
+        </button>
+      </div>
+    </div>
+  );
+
+  // --- RENDER: Right panel for CONNECT phase ---
+  const renderConnectPanel = () => (
+    <div className="guided-right-panel">
+      <div className="right-panel-header">
+        <h3>🔌 Model Connection</h3>
+        <p>Configure how the eval runner connects to your model for offline testing and (optionally) production monitoring.</p>
+      </div>
+      <div className="right-panel-content">
+        <div className="connect-section">
+          <h4>Model Endpoint</h4>
+          <div className="form-group">
+            <label>Endpoint URL</label>
+            <input
+              type="text"
+              placeholder="https://your-model-api.fburl.com/v1/predict"
+              value={evalConfig.modelEndpoint}
+              onChange={(e) => updateConfig({ modelEndpoint: e.target.value })}
+            />
+            <p className="form-hint">The API endpoint the eval runner will call with test inputs</p>
+          </div>
+
+          <div className="form-group">
+            <label>Authentication</label>
+            <select
+              value={evalConfig.modelAuthType}
+              onChange={(e) => updateConfig({ modelAuthType: e.target.value })}
+            >
+              <option value="none">None (internal service)</option>
+              <option value="api_key">API Key</option>
+              <option value="oauth">OAuth / Service Token</option>
+            </select>
+          </div>
+
+          {evalConfig.modelAuthType === 'api_key' && (
+            <div className="form-group">
+              <label>API Key</label>
+              <input
+                type="password"
+                placeholder="sk-..."
+                value={evalConfig.modelApiKey}
+                onChange={(e) => updateConfig({ modelApiKey: e.target.value })}
+              />
+            </div>
+          )}
+
+          <div className="form-group">
+            <label>Request Format</label>
+            <select
+              value={evalConfig.modelRequestFormat}
+              onChange={(e) => updateConfig({ modelRequestFormat: e.target.value })}
+            >
+              <option value="openai_chat">OpenAI Chat (messages array)</option>
+              <option value="anthropic">Anthropic Messages API</option>
+              <option value="raw_json">Raw JSON (custom template)</option>
+              <option value="text_in_text_out">Plain text in → text out</option>
+            </select>
+            <p className="form-hint">How the eval runner should structure the request payload</p>
+          </div>
+
+          {evalConfig.modelRequestFormat === 'raw_json' && (
+            <div className="form-group">
+              <label>Request Template</label>
+              <textarea
+                className="code-textarea"
+                placeholder={'{"prompt": "{{input}}", "max_tokens": 1024}'}
+                value={evalConfig.modelRequestTemplate}
+                onChange={(e) => updateConfig({ modelRequestTemplate: e.target.value })}
+                rows={4}
+              />
+              <p className="form-hint">Use {'{{input}}'} as a placeholder for the test input</p>
+            </div>
+          )}
+
+          <div className="form-group">
+            <label>Response Path</label>
+            <input
+              type="text"
+              placeholder="choices[0].message.content"
+              value={evalConfig.modelResponsePath}
+              onChange={(e) => updateConfig({ modelResponsePath: e.target.value })}
+            />
+            <p className="form-hint">JSON path to extract the model's output from the response</p>
+          </div>
+        </div>
+
+        <div className="connect-section connect-divider">
+          <div className="section-toggle">
+            <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={evalConfig.prodLogEnabled}
+                onChange={(e) => updateConfig({ prodLogEnabled: e.target.checked })}
+                style={{ width: '20px', height: '20px' }}
+              />
+              <span><strong>Enable Production Log Monitoring</strong></span>
+            </label>
+            <p className="form-hint" style={{ marginTop: '4px' }}>Continuously evaluate real production traffic alongside offline batch evals</p>
+          </div>
+
+          {evalConfig.prodLogEnabled && (
+            <>
+              <div className="form-group">
+                <label>Log Source</label>
+                <select
+                  value={evalConfig.prodLogSource}
+                  onChange={(e) => updateConfig({ prodLogSource: e.target.value })}
+                >
+                  <option value="scuba">Scuba Table</option>
+                  <option value="hive">Hive Table</option>
+                  <option value="custom_api">Custom API Endpoint</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>{evalConfig.prodLogSource === 'scuba' ? 'Scuba Table' : evalConfig.prodLogSource === 'hive' ? 'Hive Table' : 'API Endpoint'}</label>
+                <input
+                  type="text"
+                  placeholder={evalConfig.prodLogSource === 'scuba' ? 'mft_model_requests' : evalConfig.prodLogSource === 'hive' ? 'mft_data.model_requests' : 'https://...'}
+                  value={evalConfig.prodLogTable}
+                  onChange={(e) => updateConfig({ prodLogTable: e.target.value })}
+                />
+              </div>
+
+              <div className="guided-basics-row">
+                <div className="form-group">
+                  <label>Input Column</label>
+                  <input
+                    type="text"
+                    placeholder="request_body"
+                    value={evalConfig.prodLogInputColumn}
+                    onChange={(e) => updateConfig({ prodLogInputColumn: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Output Column</label>
+                  <input
+                    type="text"
+                    placeholder="response_body"
+                    value={evalConfig.prodLogOutputColumn}
+                    onChange={(e) => updateConfig({ prodLogOutputColumn: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="guided-basics-row">
+                <div className="form-group">
+                  <label>Timestamp Column</label>
+                  <input
+                    type="text"
+                    placeholder="created_at"
+                    value={evalConfig.prodLogTimestampColumn}
+                    onChange={(e) => updateConfig({ prodLogTimestampColumn: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Sample Rate (%)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={evalConfig.prodLogSampleRate}
+                    onChange={(e) => updateConfig({ prodLogSampleRate: parseInt(e.target.value) || 10 })}
+                  />
+                  <p className="form-hint">% of production requests to evaluate</p>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="right-panel-cta">
+        <button className="btn-primary" onClick={handlePhaseAdvance}>
+          Continue to Manage →
         </button>
       </div>
     </div>
@@ -833,368 +1534,303 @@ function GuidedEval({ onComplete, onCancel }) {
     );
   };
 
-  const renderMetricsRationale = () => {
-    const rationale = evalConfig.rationale || [];
-    if (rationale.length === 0) return null;
+  // --- RENDER: Right panel for MANAGE phase ---
+  const renderManagePanel = () => (
+    <div className="guided-right-panel">
+      <div className="right-panel-header">
+        <h3>⚙️ Manage — Ownership, Schedule & Alerts</h3>
+        <p>Set the eval owner, team, run schedule, and alert preferences.</p>
+      </div>
+      <div className="right-panel-content">
+        <div className="guided-basics-row">
+          {renderOwnerField()}
+          <div className="form-group">
+            <label>Team</label>
+            <select value={evalConfig.team} onChange={(e) => updateConfig({ team: e.target.value })}>
+              <option value="">Select team...</option>
+              {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="guided-basics-row">
+          <div className="form-group">
+            <label>Run Schedule</label>
+            <select value={evalConfig.schedule} onChange={(e) => updateConfig({ schedule: e.target.value })}>
+              <option value="manual">Manual only</option>
+              <option value="daily">Daily (2 AM)</option>
+              <option value="weekly">Weekly (Sundays)</option>
+              <option value="on_deploy">On every deployment</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={evalConfig.alertOnRegression}
+              onChange={(e) => updateConfig({ alertOnRegression: e.target.checked })}
+              style={{ width: '20px', height: '20px' }}
+            />
+            <div>
+              <strong>Alert on regression</strong>
+              <p style={{ fontSize: '13px', color: '#65676b', margin: 0 }}>
+                Send a notification when any metric drops below baseline.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        {evalConfig.alertOnRegression && (
+          <div className="form-group">
+            <label>Alert Channel</label>
+            <input
+              type="text"
+              placeholder="#mft-ai-alerts"
+              value={evalConfig.alertChannel}
+              onChange={(e) => updateConfig({ alertChannel: e.target.value })}
+            />
+          </div>
+        )}
+      </div>
+      <div className="right-panel-cta">
+        <button className="btn-primary" onClick={handlePhaseAdvance}>
+          Review Final Draft →
+        </button>
+      </div>
+    </div>
+  );
+
+
+  // --- RENDER: Right panel for REVIEW phase (full-width) ---
+  const renderFinalReview = () => {
+    const scheduleLabels = { manual: 'Manual only', daily: 'Daily (2 AM)', weekly: 'Weekly (Sundays)', on_deploy: 'On every deployment' };
 
     return (
-      <div className="metrics-rationale">
-        <div className="rationale-header">
-          <span className="rationale-icon">💡</span>
-          <h4>Why these metrics & thresholds?</h4>
+      <div className="guided-right-panel guided-review-panel">
+        <div className="right-panel-header">
+          <h3>📋 Final Eval Draft</h3>
+          <p>Review everything below. All fields are still editable. Click "Create Eval" when ready.</p>
         </div>
-        <div className="rationale-list">
-          {rationale.map((r, i) => (
-            <div key={i} className="rationale-item">
-              <p>{renderInlineMarkdown(r)}</p>
+        <div className="right-panel-content">
+          <div className="review-section">
+            <h3>🔹 Basics</h3>
+            <div className="form-group">
+              <label>Eval Name</label>
+              <input type="text" value={evalConfig.name} onChange={(e) => updateConfig({ name: e.target.value })} />
             </div>
-          ))}
+            <div className="form-group">
+              <label>Description</label>
+              <textarea value={evalConfig.description} onChange={(e) => updateConfig({ description: e.target.value })} rows={2} />
+            </div>
+          </div>
+
+          <div className="review-section">
+            <h3>🔹 Metrics & Thresholds</h3>
+            <table className="metrics-table guided-metrics-table">
+              <thead>
+                <tr>
+                  <th className="col-metric">Metric</th>
+                  <th className="col-measurement">Measurement</th>
+                  <th className="col-baseline">Baseline %</th>
+                  <th className="col-target">Target %</th>
+                  <th className="col-action"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {evalConfig.metrics.map((metric, i) => (
+                  <tr key={i}>
+                    <td>
+                      <input type="text" className="metric-field-input" value={metric.field}
+                        onChange={(e) => handleMetricChange(i, 'field', e.target.value)} />
+                    </td>
+                    <td>
+                      <select value={metric.measurement?.[0] || ''}
+                        onChange={(e) => handleMetricChange(i, 'measurement', e.target.value ? [e.target.value] : [])}
+                        className="metric-measurement-select">
+                        <option value="">Select...</option>
+                        {MEASUREMENT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <input type="number" className="threshold-input" min="0" max="100"
+                        value={metric.thresholds?.baseline || 80}
+                        onChange={(e) => handleThresholdChange(i, 'baseline', e.target.value)} />
+                    </td>
+                    <td>
+                      <input type="number" className="threshold-input" min="0" max="100"
+                        value={metric.thresholds?.target || 95}
+                        onChange={(e) => handleThresholdChange(i, 'target', e.target.value)} />
+                    </td>
+                    <td>
+                      <button className="btn-remove" onClick={() => handleRemoveMetric(i)}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button className="btn-secondary add-metric-btn" onClick={handleAddMetric}>+ Add Metric</button>
+          </div>
+
+          <div className="review-section">
+            <h3>🔹 Sample Data</h3>
+            <p style={{ fontSize: '14px', color: '#65676b' }}>
+              Source: {evalConfig.datasetSource} · {evalConfig.datasetSize} examples
+              {evalConfig.sampleData?.length > 0 && ` · ${evalConfig.sampleData.length} manual entries`}
+            </p>
+          </div>
+
+          <div className="review-section">
+            <h3>🔹 Manage</h3>
+            <div className="guided-basics-row">
+              {renderOwnerField()}
+              <div className="form-group">
+                <label>Team</label>
+                <select value={evalConfig.team} onChange={(e) => updateConfig({ team: e.target.value })}>
+                  <option value="">Select team...</option>
+                  {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="guided-basics-row">
+              <div className="form-group">
+                <label>Schedule</label>
+                <select value={evalConfig.schedule} onChange={(e) => updateConfig({ schedule: e.target.value })}>
+                  <option value="manual">Manual only</option>
+                  <option value="daily">Daily (2 AM)</option>
+                  <option value="weekly">Weekly (Sundays)</option>
+                  <option value="on_deploy">On every deployment</option>
+                </select>
+              </div>
+            </div>
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+                <input type="checkbox" checked={evalConfig.alertOnRegression}
+                  onChange={(e) => updateConfig({ alertOnRegression: e.target.checked })}
+                  style={{ width: '20px', height: '20px' }} />
+                <span>Alert on regression</span>
+              </label>
+            </div>
+            {evalConfig.alertOnRegression && (
+              <div className="form-group">
+                <label>Alert Channel</label>
+                <input type="text" placeholder="#mft-ai-alerts" value={evalConfig.alertChannel}
+                  onChange={(e) => updateConfig({ alertChannel: e.target.value })} />
+              </div>
+            )}
+          </div>
+
+          <div className="review-section">
+            <h3>🔹 YAML Preview</h3>
+            <div className="yaml-preview">
+              <pre>{generateYaml(evalConfig, scheduleLabels)}</pre>
+            </div>
+          </div>
+        </div>
+
+        <div className="right-panel-cta review-actions">
+          <button className="btn-secondary" onClick={onCancel}>Cancel</button>
+          {createdEvalId ? (
+            <>
+              <button className="btn-primary" onClick={handleRunEval} disabled={isRunning || !evalConfig.modelEndpoint}>
+                {isRunning ? '⏳ Running...' : '▶️ Run Eval'}
+              </button>
+              <button className="btn-secondary" onClick={() => onComplete(evalConfig)}>
+                ✅ Done
+              </button>
+            </>
+          ) : Object.keys(getPhaseValidation()).length > 0 ? (
+            <button className="btn-primary" disabled title="Complete all sections before creating">
+              🚀 Create Eval
+            </button>
+          ) : (
+            <button className="btn-primary" onClick={handleCreateEval} disabled={isCreating}>
+              {isCreating ? '⏳ Creating...' : '🚀 Create Eval'}
+            </button>
+          )}
         </div>
       </div>
     );
   };
 
-  const renderMetricsEditor = () => (
-    <div className="guided-config-panel">
-      <div className="config-panel-header">
-        <h3>📊 Suggested Metrics & Thresholds</h3>
-        <p>Edit any field below. Add or remove metrics as needed.</p>
-      </div>
+  // Determine which right panel to show
+  const renderRightPanel = () => {
+    switch (phase) {
+      case PHASES.REFINE:
+        return renderRefinePanel();
+      case PHASES.METRICS:
+        return renderMetricsPanel();
+      case PHASES.SAMPLE_DATA:
+        return renderSampleDataPanel();
+      case PHASES.CONNECT:
+        return renderConnectPanel();
+      case PHASES.MANAGE:
+        return renderManagePanel();
+      case PHASES.REVIEW:
+        return renderFinalReview();
+      default:
+        return null;
+    }
+  };
 
-      <div className="form-group">
-        <label>Eval Name</label>
-        <input
-          type="text"
-          value={evalConfig.name}
-          onChange={(e) => updateConfig({ name: e.target.value })}
-          placeholder="my_eval_name"
-        />
-      </div>
+  const validation = getPhaseValidation();
+  const hasRightPanel = phase !== PHASES.OBJECTIVE;
 
-      <div className="form-group">
-        <label>Description</label>
-        <textarea
-          value={evalConfig.description}
-          onChange={(e) => updateConfig({ description: e.target.value })}
-          rows={2}
-          placeholder="What does this eval measure?"
-        />
-      </div>
+  const pillClass = (pillKey, phases) => {
+    const isActive = phases.includes(phase);
+    const isIncomplete = validation[pillKey];
 
-      <table className="metrics-table guided-metrics-table">
-        <thead>
-          <tr>
-            <th>Metric</th>
-            <th>Measurement</th>
-            <th>Description</th>
-            <th>Baseline %</th>
-            <th>Target %</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {evalConfig.metrics.map((metric, i) => (
-            <tr key={i}>
-              <td>
-                <input
-                  type="text"
-                  className="metric-field-input"
-                  value={metric.field}
-                  onChange={(e) => handleMetricChange(i, 'field', e.target.value)}
-                  placeholder="Metric name"
-                />
-              </td>
-              <td>
-                <select
-                  value={metric.measurement?.[0] || ''}
-                  onChange={(e) => handleMetricChange(i, 'measurement', e.target.value ? [e.target.value] : [])}
-                  className="metric-measurement-select"
-                >
-                  <option value="">Select...</option>
-                  {MEASUREMENT_OPTIONS.map(o => (
-                    <option key={o.id} value={o.id}>{o.name}</option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <input
-                  type="text"
-                  className="metric-desc-input"
-                  value={metric.description}
-                  onChange={(e) => handleMetricChange(i, 'description', e.target.value)}
-                  placeholder="Describe..."
-                />
-              </td>
-              <td>
-                <input
-                  type="number"
-                  className="threshold-input"
-                  min="0" max="100"
-                  value={metric.thresholds?.baseline || 80}
-                  onChange={(e) => handleThresholdChange(i, 'baseline', e.target.value)}
-                />
-              </td>
-              <td>
-                <input
-                  type="number"
-                  className="threshold-input"
-                  min="0" max="100"
-                  value={metric.thresholds?.target || 95}
-                  onChange={(e) => handleThresholdChange(i, 'target', e.target.value)}
-                />
-              </td>
-              <td>
-                <button className="btn-remove" onClick={() => handleRemoveMetric(i)} title="Remove">✕</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    // Map pill to its representative phase index for comparison
+    const pillPhaseIndex = {
+      describe: phaseIndex(PHASES.OBJECTIVE),
+      metrics: phaseIndex(PHASES.METRICS),
+      data: phaseIndex(PHASES.SAMPLE_DATA),
+      connect: phaseIndex(PHASES.CONNECT),
+      manage: phaseIndex(PHASES.MANAGE),
+      review: phaseIndex(PHASES.REVIEW),
+    }[pillKey];
 
-      <button className="btn-secondary add-metric-btn" onClick={handleAddMetric}>
-        + Add Metric
-      </button>
+    const highestIdx = phaseIndex(highestPhase);
+    const wasReached = pillPhaseIndex <= highestIdx;
 
-      {renderMetricsRationale()}
+    let cls = 'phase-step clickable';
+    if (isActive) cls += ' active';
 
-      <div className="config-panel-actions">
-        <button className="btn-primary" onClick={handlePhaseAdvance}>
-          Looks Good, Continue →
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderAutomationEditor = () => (
-    <div className="guided-config-panel">
-      <div className="config-panel-header">
-        <h3>⚙️ Ownership, Automation & Notifications</h3>
-        <p>Set the eval owner, team, run schedule, and alert preferences.</p>
-      </div>
-
-      <div className="guided-basics-row">
-        {renderOwnerField()}
-        <div className="form-group">
-          <label>Team</label>
-          <select value={evalConfig.team} onChange={(e) => updateConfig({ team: e.target.value })}>
-            <option value="">Select team...</option>
-            {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="guided-basics-row">
-        <div className="form-group">
-          <label>Run Schedule</label>
-          <select value={evalConfig.schedule} onChange={(e) => updateConfig({ schedule: e.target.value })}>
-            <option value="manual">Manual only</option>
-            <option value="daily">Daily (2 AM)</option>
-            <option value="weekly">Weekly (Sundays)</option>
-            <option value="on_deploy">On every deployment</option>
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Dataset Source</label>
-          <select value={evalConfig.datasetSource} onChange={(e) => updateConfig({ datasetSource: e.target.value })}>
-            <option value="csv">CSV File Upload</option>
-            <option value="gsheet">Google Sheet</option>
-            <option value="hive">Hive Table</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="form-group">
-        <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={evalConfig.alertOnRegression}
-            onChange={(e) => updateConfig({ alertOnRegression: e.target.checked })}
-            style={{ width: '20px', height: '20px' }}
-          />
-          <div>
-            <strong>Alert on regression</strong>
-            <p style={{ fontSize: '13px', color: '#65676b', margin: 0 }}>
-              Send a notification when any metric drops below baseline.
-            </p>
-          </div>
-        </label>
-      </div>
-
-      {evalConfig.alertOnRegression && (
-        <div className="form-group">
-          <label>Alert Channel</label>
-          <input
-            type="text"
-            placeholder="#mft-ai-alerts"
-            value={evalConfig.alertChannel}
-            onChange={(e) => updateConfig({ alertChannel: e.target.value })}
-          />
-        </div>
-      )}
-
-      <div className="config-panel-actions">
-        <button className="btn-primary" onClick={handlePhaseAdvance}>
-          Looks Good, Review Final Draft →
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderFinalReview = () => {
-    const scheduleLabels = { manual: 'Manual only', daily: 'Daily (2 AM)', weekly: 'Weekly (Sundays)', on_deploy: 'On every deployment' };
-
-    return (
-      <div className="guided-config-panel guided-review">
-        <div className="config-panel-header">
-          <h3>📋 Final Eval Draft</h3>
-          <p>Review everything below. All fields are still editable. Click "Create Eval" when ready.</p>
-        </div>
-
-        <div className="review-section">
-          <h3>🔹 Basics</h3>
-          <div className="form-group">
-            <label>Eval Name</label>
-            <input type="text" value={evalConfig.name} onChange={(e) => updateConfig({ name: e.target.value })} />
-          </div>
-          <div className="form-group">
-            <label>Description</label>
-            <textarea value={evalConfig.description} onChange={(e) => updateConfig({ description: e.target.value })} rows={2} />
-          </div>
-        </div>
-
-        <div className="review-section">
-          <h3>🔹 Metrics & Thresholds</h3>
-          <table className="metrics-table guided-metrics-table">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                <th>Measurement</th>
-                <th>Baseline %</th>
-                <th>Target %</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {evalConfig.metrics.map((metric, i) => (
-                <tr key={i}>
-                  <td>
-                    <input type="text" className="metric-field-input" value={metric.field}
-                      onChange={(e) => handleMetricChange(i, 'field', e.target.value)} />
-                  </td>
-                  <td>
-                    <select value={metric.measurement?.[0] || ''}
-                      onChange={(e) => handleMetricChange(i, 'measurement', e.target.value ? [e.target.value] : [])}
-                      className="metric-measurement-select">
-                      <option value="">Select...</option>
-                      {MEASUREMENT_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                  </td>
-                  <td>
-                    <input type="number" className="threshold-input" min="0" max="100"
-                      value={metric.thresholds?.baseline || 80}
-                      onChange={(e) => handleThresholdChange(i, 'baseline', e.target.value)} />
-                  </td>
-                  <td>
-                    <input type="number" className="threshold-input" min="0" max="100"
-                      value={metric.thresholds?.target || 95}
-                      onChange={(e) => handleThresholdChange(i, 'target', e.target.value)} />
-                  </td>
-                  <td>
-                    <button className="btn-remove" onClick={() => handleRemoveMetric(i)}>✕</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button className="btn-secondary add-metric-btn" onClick={handleAddMetric}>+ Add Metric</button>
-        </div>
-
-        <div className="review-section">
-          <h3>🔹 Ownership & Automation</h3>
-          <div className="guided-basics-row">
-            {renderOwnerField()}
-            <div className="form-group">
-              <label>Team</label>
-              <select value={evalConfig.team} onChange={(e) => updateConfig({ team: e.target.value })}>
-                <option value="">Select team...</option>
-                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="guided-basics-row">
-            <div className="form-group">
-              <label>Schedule</label>
-              <select value={evalConfig.schedule} onChange={(e) => updateConfig({ schedule: e.target.value })}>
-                <option value="manual">Manual only</option>
-                <option value="daily">Daily (2 AM)</option>
-                <option value="weekly">Weekly (Sundays)</option>
-                <option value="on_deploy">On every deployment</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Dataset Source</label>
-              <select value={evalConfig.datasetSource} onChange={(e) => updateConfig({ datasetSource: e.target.value })}>
-                <option value="csv">CSV File Upload</option>
-                <option value="gsheet">Google Sheet</option>
-                <option value="hive">Hive Table</option>
-              </select>
-            </div>
-          </div>
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={evalConfig.alertOnRegression}
-                onChange={(e) => updateConfig({ alertOnRegression: e.target.checked })}
-                style={{ width: '20px', height: '20px' }} />
-              <span>Alert on regression</span>
-            </label>
-          </div>
-          {evalConfig.alertOnRegression && (
-            <div className="form-group">
-              <label>Alert Channel</label>
-              <input type="text" placeholder="#mft-ai-alerts" value={evalConfig.alertChannel}
-                onChange={(e) => updateConfig({ alertChannel: e.target.value })} />
-            </div>
-          )}
-        </div>
-
-        <div className="review-section">
-          <h3>🔹 YAML Preview</h3>
-          <div className="yaml-preview">
-            <pre>{generateYaml(evalConfig, scheduleLabels)}</pre>
-          </div>
-        </div>
-
-        <div className="config-panel-actions review-actions">
-          <button className="btn-secondary" onClick={onCancel}>Cancel</button>
-          <button className="btn-primary" onClick={() => onComplete(evalConfig)}>
-            🚀 Create Eval
-          </button>
-        </div>
-      </div>
-    );
+    if (isIncomplete && wasReached && !isActive) {
+      // Skipped: user moved past this section without completing it
+      cls += ' incomplete';
+    } else if (!isIncomplete && wasReached && !isActive) {
+      // Completed: section has valid inputs
+      cls += ' completed';
+    }
+    // Otherwise: grey default (not yet reached, or active)
+    return cls;
   };
 
   return (
     <div className="guided-eval">
       <div className="guided-eval-header">
-        <h2>🤖 Guided Eval Builder</h2>
+        <h2><ChatAvatar size={22} /> Guided Eval Builder</h2>
         <div className="guided-phase-indicator">
-          <span className={`phase-step ${[PHASES.OBJECTIVE, PHASES.REFINE].includes(phase) ? 'active' : 'completed'}`}>1. Describe</span>
+          <span className={pillClass('describe', PILL_PHASES.describe)} onClick={() => navigateToPhase('describe')}>1. Objective</span>
           <span className="phase-arrow">→</span>
-          <span className={`phase-step ${phase === PHASES.METRICS ? 'active' : [PHASES.AUTOMATION, PHASES.REVIEW].includes(phase) ? 'completed' : ''}`}>2. Metrics</span>
+          <span className={pillClass('metrics', PILL_PHASES.metrics)} onClick={() => navigateToPhase('metrics')}>2. Metrics</span>
           <span className="phase-arrow">→</span>
-          <span className={`phase-step ${phase === PHASES.AUTOMATION ? 'active' : phase === PHASES.REVIEW ? 'completed' : ''}`}>3. Ownership</span>
+          <span className={pillClass('data', PILL_PHASES.data)} onClick={() => navigateToPhase('data')}>3. Data</span>
           <span className="phase-arrow">→</span>
-          <span className={`phase-step ${phase === PHASES.REVIEW ? 'active' : ''}`}>4. Review</span>
+          <span className={pillClass('connect', PILL_PHASES.connect)} onClick={() => navigateToPhase('connect')}>4. Connect</span>
+          <span className="phase-arrow">→</span>
+          <span className={pillClass('manage', PILL_PHASES.manage)} onClick={() => navigateToPhase('manage')}>5. Manage</span>
+          <span className="phase-arrow">→</span>
+          <span className={pillClass('review', [])} onClick={() => navigateToPhase('review')}>6. Review</span>
         </div>
         <button className="btn-secondary guided-cancel-btn" onClick={onCancel}>✕</button>
       </div>
 
-      <div className="guided-eval-body">
-        {renderChat()}
-        {phase === PHASES.METRICS && renderMetricsEditor()}
-        {phase === PHASES.AUTOMATION && renderAutomationEditor()}
-        {phase === PHASES.REVIEW && renderFinalReview()}
+      <div className={`guided-eval-body ${hasRightPanel ? 'split-layout' : 'single-layout'}`}>
+        {renderChatPanel()}
+        {renderRightPanel()}
       </div>
     </div>
   );
@@ -1228,6 +1864,23 @@ function generateYaml(config, scheduleLabels) {
   yaml += `\ndataset:\n`;
   yaml += `  source: ${config.datasetSource}\n`;
   yaml += `  size: ${config.datasetSize} examples\n`;
+  if (config.sampleData?.length > 0) {
+    yaml += `  sample_entries: ${config.sampleData.length}\n`;
+  }
+  yaml += `\nmodel_connection:\n`;
+  yaml += `  endpoint: ${config.modelEndpoint || 'TBD'}\n`;
+  yaml += `  auth: ${config.modelAuthType}\n`;
+  yaml += `  request_format: ${config.modelRequestFormat}\n`;
+  yaml += `  response_path: ${config.modelResponsePath}\n`;
+  if (config.prodLogEnabled) {
+    yaml += `\nproduction_monitoring:\n`;
+    yaml += `  source: ${config.prodLogSource}\n`;
+    yaml += `  table: ${config.prodLogTable}\n`;
+    yaml += `  input_column: ${config.prodLogInputColumn}\n`;
+    yaml += `  output_column: ${config.prodLogOutputColumn}\n`;
+    yaml += `  timestamp_column: ${config.prodLogTimestampColumn}\n`;
+    yaml += `  sample_rate: ${config.prodLogSampleRate}%\n`;
+  }
   yaml += `\nautomation:\n`;
   yaml += `  schedule: ${scheduleLabels[config.schedule] || config.schedule}\n`;
   yaml += `  alert_on_regression: ${config.alertOnRegression}\n`;
