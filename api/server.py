@@ -279,6 +279,95 @@ async def validate_metrics(request: ValidateMetricsRequest):
         raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
 
 
+# ─── Production Log Source Endpoints ──────────────────────────────────────────
+
+@app.post("/api/evals/{eval_id}/test-connection")
+async def test_log_connection(eval_id: str):
+    """
+    Test connectivity to the eval's configured production log source.
+    Returns connection status, message, and a sample row if available.
+    """
+    try:
+        from mft_evals.storage import get_eval as db_get
+        from mft_evals.integrations.log_sources import config_from_eval_data, create_log_source
+
+        eval_data = db_get(eval_id)
+        if not eval_data:
+            raise HTTPException(status_code=404, detail=f"Eval not found: {eval_id}")
+
+        log_config = config_from_eval_data(eval_data)
+        if not log_config:
+            return {
+                "connected": False,
+                "message": "Production logging not enabled for this eval. Configure it in the CONNECT phase.",
+                "sample_row": None,
+            }
+
+        source = create_log_source(log_config)
+        result = await source.test_connection()
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Test connection error: {e}", exc_info=True)
+        return {"connected": False, "message": f"Connection test failed: {str(e)}", "sample_row": None}
+
+
+@app.post("/api/evals/{eval_id}/ingest")
+async def ingest_production_logs(eval_id: str, trigger_run: bool = False, max_rows: int = 500):
+    """
+    Ingest production logs for an eval. Fetches recent logs from the
+    configured source, converts to test cases, and optionally triggers
+    an eval run.
+    """
+    try:
+        from mft_evals.integrations.log_worker import LogIngestionWorker
+
+        if not hasattr(app.state, "log_worker"):
+            app.state.log_worker = LogIngestionWorker()
+
+        result = await app.state.log_worker.ingest_eval(
+            eval_id=eval_id,
+            trigger_run=trigger_run,
+            max_rows=max_rows,
+        )
+        return {"status": result.status, "result": result.to_dict()}
+
+    except Exception as e:
+        logger.error(f"Ingest error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+
+
+@app.get("/api/evals/{eval_id}/log-schema")
+async def get_log_schema(eval_id: str):
+    """
+    Get the schema of the eval's configured production log source.
+    Returns available columns/fields for mapping.
+    """
+    try:
+        from mft_evals.storage import get_eval as db_get
+        from mft_evals.integrations.log_sources import config_from_eval_data, create_log_source
+
+        eval_data = db_get(eval_id)
+        if not eval_data:
+            raise HTTPException(status_code=404, detail=f"Eval not found: {eval_id}")
+
+        log_config = config_from_eval_data(eval_data)
+        if not log_config:
+            return {"schema": [], "message": "Production logging not configured"}
+
+        source = create_log_source(log_config)
+        schema = await source.get_schema()
+        return {"schema": schema}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Schema fetch error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Schema fetch failed: {str(e)}")
+
+
 # ─── Server Entry Point ──────────────────────────────────────────────────────
 
 def start():

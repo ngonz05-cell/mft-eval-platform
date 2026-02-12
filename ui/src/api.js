@@ -290,3 +290,62 @@ export async function validateMetrics(metrics, sampleData, description = '') {
 
   return response.json();
 }
+
+// ─── Production Log Source Endpoints ──────────────────────────────────────────
+
+/**
+ * Test connectivity to an eval's configured production log source.
+ * @param {string} evalId
+ * @returns {Promise<Object>} - { connected, message, sample_row }
+ */
+export async function testLogConnection(evalId) {
+  const response = await fetch(`${API_BASE}/api/evals/${evalId}/test-connection`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || `API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Ingest production logs for an eval.
+ * @param {string} evalId
+ * @param {Object} opts - { triggerRun, maxRows }
+ * @returns {Promise<Object>} - { status, result: IngestionResult }
+ */
+export async function ingestProductionLogs(evalId, { triggerRun = false, maxRows = 500 } = {}) {
+  const params = new URLSearchParams();
+  if (triggerRun) params.set('trigger_run', 'true');
+  params.set('max_rows', maxRows);
+
+  const response = await fetch(`${API_BASE}/api/evals/${evalId}/ingest?${params}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || `API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get the schema of an eval's configured production log source.
+ * @param {string} evalId
+ * @returns {Promise<Object>} - { schema: [...] }
+ */
+export async function getLogSchema(evalId) {
+  const response = await fetch(`${API_BASE}/api/evals/${evalId}/log-schema`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || `API error: ${response.status}`);
+  }
+
+  return response.json();
+}
